@@ -25,3 +25,53 @@ The project follows a 3-tier architecture:
   - Cloud: Streamlit dashboard deployed on Google Cloud Run
 
 ## 📁 Repository Structure
+
+```
+project-weather/
+├── m5stack/          # M5Stack device code (Python)
+├── service/          # Flask backend service
+├── dashboard/        # Streamlit cloud dashboard
+├── sql/              # BigQuery schema and queries
+└── res/              # Static assets (images, fonts, icons)
+```
+
+## 🚀 Status
+
+🚧 **In active development** — see commit history for progress.
+
+## ☁️ Google Cloud Setup
+
+- **Project ID**: `project-weather-494814`
+- **Region**: `europe-west6` (Zürich)
+- **BigQuery Dataset**: `weather_data`
+- **BigQuery Table**: `sensor_data`
+
+### Schema of `sensor_data`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `measurement_time` | TIMESTAMP | When the measurement was taken |
+| `indoor_temp` | FLOAT | Indoor temperature (°C) |
+| `indoor_humidity` | FLOAT | Indoor humidity (%) |
+| `indoor_air_quality` | FLOAT | Indoor air quality / CO2 (ppm) |
+| `outdoor_temp` | FLOAT | Outdoor temperature (°C) |
+| `outdoor_humidity` | FLOAT | Outdoor humidity (%) |
+| `ip_address` | STRING | M5Stack IP (for geolocation) |
+| `device_id` | STRING | Device identifier |
+
+### APIs Enabled
+
+- BigQuery API
+- Cloud Run Admin API
+- Cloud Build API
+- Artifact Registry API
+- Vertex AI API
+- Cloud Text-to-Speech API
+- Cloud Speech-to-Text API
+
+## 📅 Course Information
+
+- **Course**: Cloud and Advanced Analytics
+- **Institution**: HEC Lausanne / UNIL
+- **Term**: Spring 2026
+- **Final submission**: May 26, 2026
