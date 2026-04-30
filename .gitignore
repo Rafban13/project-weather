@@ -235,3 +235,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# macOS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
