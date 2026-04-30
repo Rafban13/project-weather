@@ -242,3 +242,6 @@ __marimo__/
 ._*
 .Spotlight-V100
 .Trashes
+
+# Project config (contains secrets)
+config.py
