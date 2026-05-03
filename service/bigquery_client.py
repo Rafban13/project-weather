@@ -1,26 +1,22 @@
-import sys
 import os
-
-# Add the project root to sys.path so we can import config
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-
 from google.cloud import bigquery
 from datetime import datetime, timezone
 
-import config
+try:
+    import config
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = config.GOOGLE_APPLICATION_CREDENTIALS
+    PROJECT_ID = config.PROJECT_ID
+    DATASET_NAME = config.DATASET_NAME
+    SENSOR_TABLE = config.SENSOR_TABLE
+except ImportError:
+    PROJECT_ID = os.getenv('PROJECT_ID')
+    DATASET_NAME = os.getenv('DATASET_NAME')
+    SENSOR_TABLE = os.getenv('SENSOR_TABLE')
 
 class BigQueryClient:
     def __init__(self):
-        # Tell google where to find the service account key
-        import os
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = config.GOOGLE_APPLICATION_CREDENTIALS
-
-        #create a BigQuery client
-        self.client = bigquery.Client(project=config.PROJECT_ID)
-
-        # build the full table name (project.dataset.table)
-        self.table_id = f"{config.PROJECT_ID}.{config.DATASET_NAME}.{config.SENSOR_TABLE}"
+        self.client = bigquery.Client(project=PROJECT_ID)
+        self.table_id = f"{PROJECT_ID}.{DATASET_NAME}.{SENSOR_TABLE}"
 
     def insert_sensor_data(self, data:dict) -> str:
         """
@@ -37,10 +33,10 @@ class BigQueryClient:
         if 'measurement_time' not in data:
             data['measurement_time'] = datetime.now(timezone.utc).isoformat()
 
-            # Insert the row into BigQuery
-            errors = self.client.insert_rows_json(self.table_id, [data])
+        # Insert the row into BigQuery
+        errors = self.client.insert_rows_json(self.table_id, [data])
 
-            if errors:
-                raise Exception(f"Failed to insert : {errors}")
+        if errors:
+            raise Exception(f"Failed to insert : {errors}")
             
-            return "Data inserted successfully"
+        return "Data inserted successfully"

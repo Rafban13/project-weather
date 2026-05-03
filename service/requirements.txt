@@ -1,3 +1,10 @@
 Flask==3.0.0
-google-cloud-bigquery==3.25.0
+gunicorn
 requests==2.32.3
+google-cloud-bigquery==3.25.0
+db-dtypes
+google-cloud-aiplatform
+google-cloud-texttospeech
+Pillow
+matplotlib
+pandas
