@@ -2,7 +2,6 @@ from flask import Flask, jsonify, request
 from bigquery_client import BigQueryClient
 from weather_client import WeatherClient
 
-weather_client = WeatherClient()
 
 app = Flask(__name__)
 bq_client = BigQueryClient()
@@ -26,9 +25,18 @@ def send_to_bigquery():
 @app.route('/get-outdoor-weather', methods=['GET'])
 def get_outdoor_weather():
     try:
-        city = request.args.get('city', 'Lausanne')
-        result = weather_client.get_current_weather(city)
-        return jsonify(result), 200
+        ip = request.args.get('ip', '8.8.8.8')
+        location = weather_client.fetch_location_data(ip)
+        lat, lon = location['loc'].split(',')
+        
+        current = weather_client.fetch_weather_data(lat, lon, current_weather=True)
+        forecast = weather_client.fetch_weather_data(lat, lon, current_weather=False)
+        
+        return jsonify({
+            "location": location.get('city', 'Unknown'),
+            "current": current,
+            "forecast": forecast
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
