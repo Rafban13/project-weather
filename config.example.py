@@ -22,4 +22,4 @@ OPENWEATHERMAP_API_KEY = "your-openweathermap-api-key"
 IPINFO_API_KEY = ""
 
 # Backend service URL (filled after Cloud Run deployment)
-SERVICE_CLOUD_RUN_URL = ""
+SERVICE_CLOUD_RUN_URL = "https://weather-service-197991375095.europe-west6.run.app"
