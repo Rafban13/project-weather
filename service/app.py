@@ -9,7 +9,7 @@ from texttospeech_client import TextToSpeechClient
 app = Flask(__name__)
 bq_client = BigQueryClient()
 weather_client = WeatherClient()
-vertexai_client = VertexAIClient()
+vertex_ai_client = VertexAIClient()
 texttospeech_client = TextToSpeechClient()
 TMP_DIR = '/tmp'
 
