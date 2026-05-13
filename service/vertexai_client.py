@@ -12,7 +12,7 @@ except ImportError:
 
 class VertexAIClient:
     def __init__(self):
-        vertexai.init(project=PROJECT_ID, location='europe-west1')
+        vertexai.init(project=PROJECT_ID, location='us-central1')
 
     def get_weather_description(self, weather_data: str, system_instruction: str) -> str:
         """Generate a natural language description of the weather using Gemini."""
