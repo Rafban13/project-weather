@@ -1,41 +1,41 @@
 # Weather Monitor Dashboard
 
-Dashboard Streamlit déployé sur Google Cloud Run pour monitorer les données météo indoor/outdoor en temps réel.
+Streamlit dashboard deployed on Google Cloud Run to monitor indoor/outdoor weather data in real time.
 
 ## Structure
 
 ```
 dashboard/
-├── app.py              # Interface Streamlit principale
-├── bigquery_client.py  # Requêtes BigQuery
-├── weather_api.py      # API OpenWeatherMap
-├── config.py           # Variables de configuration
-├── requirements.txt    # Dépendances Python
-└── Dockerfile          # Pour Cloud Run
+├── app.py              # Main Streamlit interface
+├── bigquery_client.py  # BigQuery queries
+├── weather_api.py      # OpenWeatherMap API
+├── config.py           # Configuration variables
+├── requirements.txt    # Python dependencies
+└── Dockerfile          # For Cloud Run
 ```
 
-## Variables d'environnement
+## Environment Variables
 
-À configurer dans Cloud Run (ne jamais mettre dans le code) :
+Configure these in Cloud Run (never hardcode them in the source code):
 
-| Variable | Description | Exemple |
+| Variable | Description | Example |
 |---|---|---|
-| `GCP_PROJECT_ID` | ID du projet Google Cloud | `project-weather-494814` |
-| `BQ_DATASET_ID` | Dataset BigQuery | `weather_data` |
-| `BQ_TABLE_ID` | Table BigQuery | `sensor_data` |
-| `OPENWEATHER_API_KEY` | Clé API OpenWeatherMap | `abc123...` |
-| `CITY` | Ville pour la météo | `Lausanne` |
-| `COUNTRY_CODE` | Code pays ISO | `CH` |
+| `GCP_PROJECT_ID` | Google Cloud project ID | `project-weather-494814` |
+| `BQ_DATASET_ID` | BigQuery dataset | `weather_data` |
+| `BQ_TABLE_ID` | BigQuery table | `sensor_data` |
+| `OPENWEATHER_API_KEY` | OpenWeatherMap API key | `abc123...` |
+| `CITY` | City for weather data | `Lausanne` |
+| `COUNTRY_CODE` | ISO country code | `CH` |
 
-## Déploiement sur Google Cloud Run
+## Deployment on Google Cloud Run
 
-### 1. Authentification
+### 1. Authenticate
 ```bash
 gcloud auth login
 gcloud config set project project-weather-494814
 ```
 
-### 2. Build & Deploy (en une commande)
+### 2. Build & Deploy (single command)
 ```bash
 cd dashboard/
 
@@ -44,33 +44,32 @@ gcloud run deploy weather-dashboard \
   --region europe-west6 \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars GCP_PROJECT_ID=project-weather-494814,BQ_DATASET_ID=weather_data,BQ_TABLE_ID=sensor_data,OPENWEATHER_API_KEY=VOTRE_CLE,CITY=Lausanne,COUNTRY_CODE=CH \
+  --set-env-vars GCP_PROJECT_ID=project-weather-494814,BQ_DATASET_ID=weather_data,BQ_TABLE_ID=sensor_data,OPENWEATHER_API_KEY=YOUR_KEY,CITY=Lausanne,COUNTRY_CODE=CH \
   --memory 512Mi \
   --cpu 1
 ```
 
-### 3. Vérifier le déploiement
+### 3. Verify deployment
 ```bash
 gcloud run services describe weather-dashboard --region europe-west6
 ```
 
-## Fonctionnalités
+## Features
 
-- ✅ Données temps réel depuis BigQuery (refresh auto 60s)
-- ✅ Alertes si humidité < 40% ou AQI > 150
-- ✅ Météo extérieure via OpenWeatherMap
-- ✅ Prévisions 5 jours
-- ✅ Graphiques historiques (6h / 12h / 24h / 48h / 7 jours)
-- ✅ Statistiques journalières (7 derniers jours)
-- ✅ Design sombre responsive
+- Real-time data from BigQuery (auto-refresh every 60s)
+- Alerts if humidity < 40% or AQI > 150
+- Outdoor weather via OpenWeatherMap
+- 5-day forecast
+- Historical charts (6h / 12h / 24h / 48h / 7 days)
+- Daily statistics (last 7 days)
+- Dark responsive design
 
-## Développement local
+## Local Development
 
 ```bash
 pip install -r requirements.txt
 
-# Avec un fichier .env ou en exportant les variables :
-export OPENWEATHER_API_KEY=votre_cle
+export OPENWEATHER_API_KEY=your_key
 export GCP_PROJECT_ID=project-weather-494814
 
 streamlit run app.py
