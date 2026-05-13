@@ -10,7 +10,7 @@ app = Flask(__name__)
 bq_client = BigQueryClient()
 weather_client = WeatherClient()
 vertex_ai_client = VertexAIClient()
-texttospeech_client = TextToSpeechClient()
+text_to_speech_client = TextToSpeechClient()
 TMP_DIR = '/tmp'
 
 @app.route("/")
