@@ -4,6 +4,9 @@ import unit
 from network import WLAN, STA_IF
 import urequests
 import utime as time
+import socket
+import struct
+from machine import RTC
 import gc
 
 # Setup écran
@@ -18,6 +21,12 @@ pir = unit.get(unit.PIR, unit.PORTB)
 # Config
 FLASK_URL = "https://weather-service-197991375095.europe-west6.run.app"
 DEVICE_ID = "m5stack-Tesla"
+
+# NTP
+NTP_DELTA = 3155673600
+NTP_QUERY = b'\x1b' + 47 * b'\0'
+NTP_SERVER = 'ch.pool.ntp.org'
+TIMEZONE_OFFSET = 2 * 3600
 
 # Réseaux connus
 KNOWN_NETWORKS = {
@@ -46,12 +55,43 @@ wifi_net2 = M5Label('', x=10, y=105, color=0xffffff, font=FONT_MONT_14)
 wifi_status = M5Label('', x=10, y=135, color=0xffff00, font=FONT_MONT_10)
 
 # ─── LABELS PAGE DASHBOARD ───
+datetime_label = M5Label('', x=160, y=0, color=0xaaaaaa, font=FONT_MONT_10)
 status_label = M5Label('', x=10, y=0, color=0xffffff, font=FONT_MONT_10)
 temp_label = M5Label('', x=10, y=18, color=0xcd8100, font=FONT_MONT_34)
 hum_label = M5Label('', x=10, y=73, color=0xffffff, font=FONT_MONT_14)
 outdoor_temp_label = M5Label('', x=10, y=98, color=0x00ffff, font=FONT_MONT_14)
 outdoor_desc_label = M5Label('', x=10, y=118, color=0xaaaaaa, font=FONT_MONT_10)
 page_hint = M5Label('', x=10, y=138, color=0x555555, font=FONT_MONT_10)
+
+def sync_ntp():
+    try:
+        addr = socket.getaddrinfo(NTP_SERVER, 123)[0][-1]
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(10)
+        s.sendto(NTP_QUERY, addr)
+        msg, _ = s.recvfrom(48)
+        s.close()
+        ntp_time = struct.unpack('!I', msg[40:44])[0] - NTP_DELTA
+        ntp_time += TIMEZONE_OFFSET
+        local_time = time.localtime(ntp_time)
+        rtc = RTC()
+        rtc.datetime((local_time[0], local_time[1], local_time[2], 0,
+                      local_time[3], local_time[4], local_time[5], 0))
+        return True
+    except:
+        return False
+
+def update_datetime():
+    try:
+        t = time.localtime()
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        day = days[t[6]]
+        text = '{} {:02d}.{:02d} {:02d}:{:02d}'.format(
+            day, t[2], t[1], t[3], t[4]
+        )
+        datetime_label.set_text(text)
+    except:
+        pass
 
 def show_wifi_page():
     global current_page
@@ -67,6 +107,7 @@ def show_wifi_page():
     outdoor_temp_label.set_text('')
     outdoor_desc_label.set_text('')
     page_hint.set_text('')
+    datetime_label.set_text('')
 
 def update_network_labels():
     labels = [wifi_net0, wifi_net1, wifi_net2]
@@ -92,7 +133,7 @@ def show_dashboard_page():
     wifi_net1.set_text('')
     wifi_net2.set_text('')
     wifi_status.set_text('')
-    page_hint.set_text('B: WiFi page')
+    page_hint.set_text('B: WiFi')
 
 def connect_to_selected():
     global device_public_ip
@@ -115,6 +156,7 @@ def connect_to_selected():
             r.close()
         except:
             pass
+        sync_ntp()
         show_dashboard_page()
     else:
         wifi_status.set_text('Failed! Try again.')
@@ -136,12 +178,12 @@ def play_weather_spoken():
             r.close()
             speaker.playWAV('/flash/weather.wav', volume=6)
             last_sound_played = current_time
-            status_label.set_text('Playing weather!')
+            status_label.set_text('Done!')
         else:
             r.close()
             status_label.set_text('TTS error')
     except Exception as e:
-        status_label.set_text('TTS err: {}'.format(str(e)[:15]))
+        status_label.set_text('TTS err')
 
 def get_outdoor_weather():
     try:
@@ -205,12 +247,14 @@ if wlan.isconnected():
         r.close()
     except:
         pass
+    sync_ntp()
     time.sleep(1)
     show_dashboard_page()
 
 # Timing
 data_last_sent = time.time() - 290
 weather_last_checked = time.time() - 115
+time_last_updated = time.time() - 55
 
 # ─── BOUCLE PRINCIPALE ───
 while True:
@@ -221,9 +265,14 @@ while True:
             temp_label.set_text('{:.1f} C'.format(temp))
             hum_label.set_text('Humidity: {:.1f}%'.format(hum))
 
-            if wlan.isconnected():
-                now = time.time()
+            now = time.time()
 
+            # Mise à jour heure toutes les minutes
+            if now - time_last_updated >= 60:
+                update_datetime()
+                time_last_updated = now
+
+            if wlan.isconnected():
                 # PIR → voix TTS
                 if pir.state == 1:
                     play_weather_spoken()
