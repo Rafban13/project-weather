@@ -72,9 +72,6 @@ def generate_current_weather_spoken():
         return jsonify({"error": str(e)}), 500
     
 
-if __name__== '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=True)
-
 
 @app.route('/get-weather-image', methods=['GET'])
 def get_weather_image():
@@ -113,3 +110,6 @@ def get_weather_image():
         return send_file(buf, mimetype='image/png')
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+if __name__== '__main__':
+    app.run(host='0.0.0.0', port=8080, debug=True)
