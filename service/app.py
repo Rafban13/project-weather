@@ -23,6 +23,21 @@ def home():
 def send_to_bigquery():
     try:
         data = request.get_json()
+
+        # Vérifier que l'IP est présente
+        ip = data.get('ip_address')
+        if not ip:
+            return jsonify({"error": "ip_address is required"}), 400
+
+        # Récupérer la météo outdoor via l'IP du device
+        location = weather_client.fetch_location_data(ip)
+        lat, lon = location['loc'].split(',')
+        current = weather_client.fetch_weather_data(lat, lon, current_weather=True)
+
+        # Enrichir les données avec les vraies valeurs outdoor
+        data['outdoor_temp'] = current['main']['temp']
+        data['outdoor_humidity'] = current['main']['humidity']
+
         result = bq_client.insert_sensor_data(data)
         return jsonify({"message": result}), 200
     except Exception as e:
