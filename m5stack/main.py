@@ -40,7 +40,7 @@ current_page = "wifi"
 selected_network_index = 0
 last_sound_played = 0
 
-# ─── LABELS PAGE WIFI ───
+# LABELS PAGE WIFI
 wifi_title = M5Label('-- WiFi Setup --', x=60, y=5, color=0x00ffff, font=FONT_MONT_14)
 wifi_hint = M5Label('A/C: select  B: connect', x=10, y=25, color=0xaaaaaa, font=FONT_MONT_10)
 wifi_net0 = M5Label('', x=10, y=55, color=0xffffff, font=FONT_MONT_14)
@@ -48,22 +48,25 @@ wifi_net1 = M5Label('', x=10, y=80, color=0xffffff, font=FONT_MONT_14)
 wifi_net2 = M5Label('', x=10, y=105, color=0xffffff, font=FONT_MONT_14)
 wifi_status = M5Label('', x=10, y=135, color=0xffff00, font=FONT_MONT_10)
 
-# ─── LABELS PAGE DASHBOARD ───
+# LABELS PAGE DASHBOARD
 datetime_label = M5Label('', x=5, y=2, color=0x888888, font=FONT_MONT_10)
 status_label = M5Label('', x=220, y=2, color=0x00ff88, font=FONT_MONT_10)
 indoor_title = M5Label('INDOOR', x=5, y=18, color=0x555555, font=FONT_MONT_10)
 temp_label = M5Label('', x=5, y=30, color=0xcd8100, font=FONT_MONT_34)
-hum_title = M5Label('HUM', x=185, y=18, color=0x555555, font=FONT_MONT_10)
-hum_label = M5Label('', x=185, y=32, color=0x88ccff, font=FONT_MONT_14)
-co2_title = M5Label('CO2', x=185, y=55, color=0x555555, font=FONT_MONT_10)
-co2_label = M5Label('', x=185, y=68, color=0x00ff00, font=FONT_MONT_10)
-co2_badge = M5Label('', x=185, y=85, color=0x00ff00, font=FONT_MONT_10)
-sep1 = M5Label('________________________', x=5, y=103, color=0x333333, font=FONT_MONT_10)
+hum_title = M5Label('HUM', x=175, y=18, color=0x555555, font=FONT_MONT_10)
+hum_label = M5Label('', x=170, y=28, color=0x88ccff, font=FONT_MONT_34)
+co2_title = M5Label('CO2', x=175, y=75, color=0x555555, font=FONT_MONT_10)
+co2_label = M5Label('', x=170, y=85, color=0x00ff00, font=FONT_MONT_14)
+co2_badge = M5Label('', x=170, y=100, color=0x00ff00, font=FONT_MONT_10)
+sep1 = M5Label('________________________', x=5, y=118, color=0x333333, font=FONT_MONT_10)
+weather_image = M5Img("/flash/res/default_current_weather.png", x=0, y=125)
+page_hint = M5Label('', x=5, y=225, color=0x444444, font=FONT_MONT_10)
 
-# Image météo outdoor
-weather_image = M5Img("/flash/res/default_current_weather.png", x=0, y=110)
+# LABELS PAGE FORECAST
+forecast_title = M5Label('', x=90, y=2, color=0x00ffff, font=FONT_MONT_14)
+forecast_hint = M5Label('', x=5, y=225, color=0x444444, font=FONT_MONT_10)
+forecast_image = M5Img("/flash/res/default_future_weather.png", x=0, y=20)
 
-page_hint = M5Label('B:WiFi', x=260, y=152, color=0x333333, font=FONT_MONT_10)
 
 def get_co2_color_and_quality(co2):
     if co2 < 600:
@@ -104,7 +107,6 @@ def update_datetime():
         pass
 
 def update_weather_image():
-    """Télécharge l'image météo depuis Flask et l'affiche."""
     try:
         url = FLASK_URL + "/get-weather-image?ip=" + (device_public_ip or "8.8.8.8")
         r = urequests.get(url)
@@ -118,14 +120,21 @@ def update_weather_image():
     except:
         pass
 
-def show_wifi_page():
-    global current_page
-    current_page = "wifi"
-    screen.set_screen_bg_color(0x001133)
-    wifi_title.set_text('-- WiFi Setup --')
-    wifi_hint.set_text('A/C: select  B: connect')
-    wifi_status.set_text('Select a network')
-    update_network_labels()
+def update_forecast_image():
+    try:
+        url = FLASK_URL + "/get-forecast-image?ip=" + (device_public_ip or "8.8.8.8")
+        r = urequests.get(url)
+        if r.status_code == 200:
+            with open('/flash/res/forecast_weather.png', 'wb') as f:
+                f.write(r.content)
+            r.close()
+            forecast_image.set_img_src('/flash/res/forecast_weather.png')
+        else:
+            r.close()
+    except:
+        pass
+
+def hide_all_dashboard():
     datetime_label.set_text('')
     status_label.set_text('')
     indoor_title.set_text('')
@@ -138,6 +147,56 @@ def show_wifi_page():
     sep1.set_text('')
     weather_image.set_hidden(True)
     page_hint.set_text('')
+
+def hide_all_forecast():
+    forecast_title.set_text('')
+    forecast_hint.set_text('')
+    forecast_image.set_hidden(True)
+
+def hide_all_wifi():
+    wifi_title.set_text('')
+    wifi_hint.set_text('')
+    wifi_net0.set_text('')
+    wifi_net1.set_text('')
+    wifi_net2.set_text('')
+    wifi_status.set_text('')
+
+def show_wifi_page():
+    global current_page
+    current_page = "wifi"
+    screen.set_screen_bg_color(0x001133)
+    hide_all_dashboard()
+    hide_all_forecast()
+    wifi_title.set_text('-- WiFi Setup --')
+    wifi_hint.set_text('A/C: select  B: connect')
+    wifi_status.set_text('Select a network')
+    update_network_labels()
+
+def show_dashboard_page():
+    global current_page
+    current_page = "dashboard"
+    screen.set_screen_bg_color(0x000000)
+    hide_all_wifi()
+    hide_all_forecast()
+    indoor_title.set_text('INDOOR')
+    hum_title.set_text('HUM')
+    co2_title.set_text('CO2')
+    sep1.set_text('________________________')
+    weather_image.set_hidden(False)
+    page_hint.set_text('< WiFi  |  Forecast >')
+    update_datetime()
+
+def show_forecast_page():
+    global current_page
+    current_page = "forecast"
+    screen.set_screen_bg_color(0x000000)
+    hide_all_wifi()
+    hide_all_dashboard()
+    forecast_title.set_text('3-DAY FORECAST')
+    forecast_image.set_hidden(False)
+    forecast_hint.set_text('< Dashboard  |  WiFi >')
+    if wlan.isconnected():
+        update_forecast_image()
 
 def update_network_labels():
     labels = [wifi_net0, wifi_net1, wifi_net2]
@@ -152,24 +211,6 @@ def update_network_labels():
                 lbl.set_text_color(0xffffff)
         else:
             lbl.set_text('')
-
-def show_dashboard_page():
-    global current_page
-    current_page = "dashboard"
-    screen.set_screen_bg_color(0x000000)
-    wifi_title.set_text('')
-    wifi_hint.set_text('')
-    wifi_net0.set_text('')
-    wifi_net1.set_text('')
-    wifi_net2.set_text('')
-    wifi_status.set_text('')
-    indoor_title.set_text('INDOOR')
-    hum_title.set_text('HUM')
-    co2_title.set_text('CO2')
-    sep1.set_text('________________________')
-    weather_image.set_hidden(False)
-    page_hint.set_text('B:WiFi')
-    update_datetime()
 
 def connect_to_selected():
     global device_public_ip
@@ -194,6 +235,7 @@ def connect_to_selected():
             pass
         sync_ntp()
         show_dashboard_page()
+        update_weather_image()
     else:
         wifi_status.set_text('Failed! Try again.')
 
@@ -245,11 +287,15 @@ def btn_a_pressed():
     if current_page == "wifi":
         selected_network_index = (selected_network_index - 1) % len(NETWORK_NAMES)
         update_network_labels()
+    elif current_page == "forecast":
+        show_dashboard_page()
 
 def btn_b_pressed():
     if current_page == "wifi":
         connect_to_selected()
     elif current_page == "dashboard":
+        show_wifi_page()
+    elif current_page == "forecast":
         show_wifi_page()
 
 def btn_c_pressed():
@@ -257,6 +303,8 @@ def btn_c_pressed():
     if current_page == "wifi":
         selected_network_index = (selected_network_index + 1) % len(NETWORK_NAMES)
         update_network_labels()
+    elif current_page == "dashboard":
+        show_forecast_page()
 
 btnA.wasPressed(btn_a_pressed)
 btnB.wasPressed(btn_b_pressed)
