@@ -1,4 +1,4 @@
-from m5stack_ui import M5Screen, M5Label, FONT_MONT_14, FONT_MONT_34, FONT_MONT_10
+from m5stack_ui import M5Screen, M5Label, M5Img, FONT_MONT_14, FONT_MONT_34, FONT_MONT_10
 from m5stack import btnA, btnB, btnC, speaker
 import unit
 from network import WLAN, STA_IF
@@ -9,34 +9,28 @@ import struct
 from machine import RTC
 import gc
 
-# Setup écran
 screen = M5Screen()
 screen.clean_screen()
 screen.set_screen_bg_color(0x000000)
 
-# Capteurs
 env3 = unit.get(unit.ENV3, unit.PORTA)
 pir = unit.get(unit.PIR, unit.PORTB)
+tvoc = unit.get(unit.TVOC, unit.PORTC)
 
-# Config
 FLASK_URL = "https://weather-service-197991375095.europe-west6.run.app"
 DEVICE_ID = "m5stack-Tesla"
 
-# NTP
 NTP_DELTA = 3155673600
 NTP_QUERY = b'\x1b' + 47 * b'\0'
 NTP_SERVER = 'ch.pool.ntp.org'
 TIMEZONE_OFFSET = 2 * 3600
 
-# Réseaux connus
-KNOWN_NETWORKS = {
-    "newyork": "e4yt-dahf-zok7-2098",
-    "iot-unil": "4u6uch4hpY9pJ2f9",
-    "public-unil": ""
-}
+try:
+    from wifi_config import KNOWN_NETWORKS
+except ImportError:
+    KNOWN_NETWORKS = {"newyork": "", "iot-unil": "", "public-unil": ""}
 NETWORK_NAMES = list(KNOWN_NETWORKS.keys())
 
-# WiFi
 wlan = WLAN(STA_IF)
 wlan.active(True)
 time.sleep(1)
@@ -55,13 +49,31 @@ wifi_net2 = M5Label('', x=10, y=105, color=0xffffff, font=FONT_MONT_14)
 wifi_status = M5Label('', x=10, y=135, color=0xffff00, font=FONT_MONT_10)
 
 # ─── LABELS PAGE DASHBOARD ───
-datetime_label = M5Label('', x=160, y=0, color=0xaaaaaa, font=FONT_MONT_10)
-status_label = M5Label('', x=10, y=0, color=0xffffff, font=FONT_MONT_10)
-temp_label = M5Label('', x=10, y=18, color=0xcd8100, font=FONT_MONT_34)
-hum_label = M5Label('', x=10, y=73, color=0xffffff, font=FONT_MONT_14)
-outdoor_temp_label = M5Label('', x=10, y=98, color=0x00ffff, font=FONT_MONT_14)
-outdoor_desc_label = M5Label('', x=10, y=118, color=0xaaaaaa, font=FONT_MONT_10)
-page_hint = M5Label('', x=10, y=138, color=0x555555, font=FONT_MONT_10)
+datetime_label = M5Label('', x=5, y=2, color=0x888888, font=FONT_MONT_10)
+status_label = M5Label('', x=220, y=2, color=0x00ff88, font=FONT_MONT_10)
+indoor_title = M5Label('INDOOR', x=5, y=18, color=0x555555, font=FONT_MONT_10)
+temp_label = M5Label('', x=5, y=30, color=0xcd8100, font=FONT_MONT_34)
+hum_title = M5Label('HUM', x=185, y=18, color=0x555555, font=FONT_MONT_10)
+hum_label = M5Label('', x=185, y=32, color=0x88ccff, font=FONT_MONT_14)
+co2_title = M5Label('CO2', x=185, y=55, color=0x555555, font=FONT_MONT_10)
+co2_label = M5Label('', x=185, y=68, color=0x00ff00, font=FONT_MONT_10)
+co2_badge = M5Label('', x=185, y=85, color=0x00ff00, font=FONT_MONT_10)
+sep1 = M5Label('________________________', x=5, y=103, color=0x333333, font=FONT_MONT_10)
+
+# Image météo outdoor
+weather_image = M5Img("/flash/res/default_current_weather.png", x=0, y=110)
+
+page_hint = M5Label('B:WiFi', x=260, y=152, color=0x333333, font=FONT_MONT_10)
+
+def get_co2_color_and_quality(co2):
+    if co2 < 600:
+        return 0x00ff00, 'EXCELLENT'
+    elif co2 < 1000:
+        return 0xffff00, 'GOOD'
+    elif co2 < 2000:
+        return 0xff8800, 'POOR'
+    else:
+        return 0xff0000, 'DANGEROUS'
 
 def sync_ntp():
     try:
@@ -86,10 +98,23 @@ def update_datetime():
         t = time.localtime()
         days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         day = days[t[6]]
-        text = '{} {:02d}.{:02d} {:02d}:{:02d}'.format(
-            day, t[2], t[1], t[3], t[4]
-        )
-        datetime_label.set_text(text)
+        datetime_label.set_text('{} {:02d}.{:02d}  {:02d}:{:02d}'.format(
+            day, t[2], t[1], t[3], t[4]))
+    except:
+        pass
+
+def update_weather_image():
+    """Télécharge l'image météo depuis Flask et l'affiche."""
+    try:
+        url = FLASK_URL + "/get-weather-image?ip=" + (device_public_ip or "8.8.8.8")
+        r = urequests.get(url)
+        if r.status_code == 200:
+            with open('/flash/res/current_weather.png', 'wb') as f:
+                f.write(r.content)
+            r.close()
+            weather_image.set_img_src('/flash/res/current_weather.png')
+        else:
+            r.close()
     except:
         pass
 
@@ -101,13 +126,18 @@ def show_wifi_page():
     wifi_hint.set_text('A/C: select  B: connect')
     wifi_status.set_text('Select a network')
     update_network_labels()
-    status_label.set_text('')
-    temp_label.set_text('')
-    hum_label.set_text('')
-    outdoor_temp_label.set_text('')
-    outdoor_desc_label.set_text('')
-    page_hint.set_text('')
     datetime_label.set_text('')
+    status_label.set_text('')
+    indoor_title.set_text('')
+    temp_label.set_text('')
+    hum_title.set_text('')
+    hum_label.set_text('')
+    co2_title.set_text('')
+    co2_label.set_text('')
+    co2_badge.set_text('')
+    sep1.set_text('')
+    weather_image.set_hidden(True)
+    page_hint.set_text('')
 
 def update_network_labels():
     labels = [wifi_net0, wifi_net1, wifi_net2]
@@ -133,7 +163,13 @@ def show_dashboard_page():
     wifi_net1.set_text('')
     wifi_net2.set_text('')
     wifi_status.set_text('')
-    page_hint.set_text('B: WiFi')
+    indoor_title.set_text('INDOOR')
+    hum_title.set_text('HUM')
+    co2_title.set_text('CO2')
+    sep1.set_text('________________________')
+    weather_image.set_hidden(False)
+    page_hint.set_text('B:WiFi')
+    update_datetime()
 
 def connect_to_selected():
     global device_public_ip
@@ -167,7 +203,7 @@ def play_weather_spoken():
     if current_time - last_sound_played < 90:
         return
     try:
-        status_label.set_text('Getting weather voice...')
+        status_label.set_text('TTS...')
         r = urequests.post(
             FLASK_URL + "/generate-current-weather-spoken",
             json={"ip": device_public_ip or "8.8.8.8"}
@@ -178,30 +214,19 @@ def play_weather_spoken():
             r.close()
             speaker.playWAV('/flash/weather.wav', volume=6)
             last_sound_played = current_time
-            status_label.set_text('Done!')
+            status_label.set_text('')
         else:
             r.close()
-            status_label.set_text('TTS error')
-    except Exception as e:
+            status_label.set_text('TTS err')
+    except:
         status_label.set_text('TTS err')
 
-def get_outdoor_weather():
-    try:
-        r = urequests.get(FLASK_URL + "/get-outdoor-weather?ip=" + (device_public_ip or "8.8.8.8"))
-        if r.status_code == 200:
-            d = r.json()
-            outdoor_temp_label.set_text('Out: {:.1f} C'.format(d["current"]["main"]["temp"]))
-            outdoor_desc_label.set_text(d["current"]["weather"][0]["description"][:25])
-        r.close()
-    except:
-        outdoor_temp_label.set_text('Weather error')
-
-def send_data(temp, hum):
+def send_data(temp, hum, co2):
     try:
         data = {
             "indoor_temp": temp,
             "indoor_humidity": hum,
-            "indoor_air_quality": 0,
+            "indoor_air_quality": co2,
             "outdoor_temp": 0,
             "outdoor_humidity": 0,
             "ip_address": device_public_ip or "unknown",
@@ -209,11 +234,12 @@ def send_data(temp, hum):
         }
         r = urequests.post(FLASK_URL + "/send-to-bigquery", json=data)
         r.close()
-        status_label.set_text('Data sent!')
+        status_label.set_text('Sent!')
+        time.sleep(2)
+        status_label.set_text('')
     except:
-        status_label.set_text('Send error')
+        status_label.set_text('Err')
 
-# ─── BOUTONS ───
 def btn_a_pressed():
     global selected_network_index
     if current_page == "wifi":
@@ -236,7 +262,6 @@ btnA.wasPressed(btn_a_pressed)
 btnB.wasPressed(btn_b_pressed)
 btnC.wasPressed(btn_c_pressed)
 
-# ─── DÉMARRAGE ───
 show_wifi_page()
 
 if wlan.isconnected():
@@ -250,46 +275,42 @@ if wlan.isconnected():
     sync_ntp()
     time.sleep(1)
     show_dashboard_page()
+    update_weather_image()
 
-# Timing
 data_last_sent = time.time() - 290
 weather_last_checked = time.time() - 115
 time_last_updated = time.time() - 55
 
-# ─── BOUCLE PRINCIPALE ───
 while True:
     try:
         if current_page == "dashboard":
             temp = env3.temperature
             hum = env3.humidity
-            temp_label.set_text('{:.1f} C'.format(temp))
-            hum_label.set_text('Humidity: {:.1f}%'.format(hum))
-
+            co2 = tvoc.eCO2
+            temp_label.set_text('{:.1f}'.format(temp))
+            hum_label.set_text('{:.1f}%'.format(hum))
+            co2_color, co2_quality = get_co2_color_and_quality(co2)
+            co2_label.set_text('{}ppm'.format(co2))
+            co2_label.set_text_color(co2_color)
+            co2_badge.set_text(co2_quality)
+            co2_badge.set_text_color(co2_color)
             now = time.time()
-
-            # Mise à jour heure toutes les minutes
             if now - time_last_updated >= 60:
                 update_datetime()
                 time_last_updated = now
-
             if wlan.isconnected():
-                # PIR → voix TTS
                 if pir.state == 1:
                     play_weather_spoken()
-
                 if now - data_last_sent >= 300:
-                    send_data(temp, hum)
+                    send_data(temp, hum, co2)
                     data_last_sent = now
-
                 if now - weather_last_checked >= 120:
-                    get_outdoor_weather()
+                    update_weather_image()
                     weather_last_checked = now
             else:
                 status_label.set_text('No WiFi')
-
     except Exception as e:
         if current_page == "dashboard":
-            status_label.set_text('Err: {}'.format(str(e)[:20]))
-
+            status_label.set_text('Err')
     time.sleep(1)
     gc.collect()

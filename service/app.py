@@ -4,7 +4,8 @@ from bigquery_client import BigQueryClient
 from weather_client import WeatherClient
 from vertexai_client import VertexAIClient
 from texttospeech_client import TextToSpeechClient
-
+from PIL import Image, ImageDraw, ImageFont
+import io
 
 app = Flask(__name__)
 bq_client = BigQueryClient()
@@ -73,3 +74,42 @@ def generate_current_weather_spoken():
 
 if __name__== '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
+
+
+@app.route('/get-weather-image', methods=['GET'])
+def get_weather_image():
+    try:
+        ip = request.args.get('ip', '8.8.8.8')
+        location = weather_client.fetch_location_data(ip)
+        lat, lon = location['loc'].split(',')
+        current = weather_client.fetch_weather_data(lat, lon, current_weather=True)
+        
+        temp = current["main"]["temp"]
+        hum = current["main"]["humidity"]
+        desc = current["weather"][0]["description"]
+        city = current.get("name", "Unknown")
+        
+        # Créer l'image 320x80 pixels (largeur M5Stack, hauteur partielle)
+        img = Image.new('RGB', (320, 80), color=(10, 10, 30))
+        draw = ImageDraw.Draw(img)
+        
+        # Température en grand — orange
+        draw.text((10, 5), '{:.1f}C'.format(temp), fill=(205, 129, 0))
+        
+        # Humidité — blanc
+        draw.text((180, 5), 'Hum: {}%'.format(hum), fill=(255, 255, 255))
+        
+        # Description — gris
+        draw.text((10, 50), desc[:30], fill=(150, 150, 150))
+        
+        # Ville — cyan
+        draw.text((180, 50), city[:15], fill=(0, 200, 255))
+        
+        # Convertir en bytes
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        
+        return send_file(buf, mimetype='image/png')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
