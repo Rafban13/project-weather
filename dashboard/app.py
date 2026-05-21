@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime
+import pytz
 import time
 
 from config import (
@@ -279,6 +280,7 @@ html, body, [class*="css"] {
 
 /* ── Radio buttons ── */
 div[data-testid="stRadio"] > div {
+    color: #1a2b4a !important;
     background: white;
     border-radius: 50px;
     padding: 4px;
@@ -360,7 +362,8 @@ def load_forecast(): return weather.get_forecast()
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
-now = datetime.now()
+tz = pytz.timezone('Europe/Zurich')
+now = datetime.now(tz)
 col_title, col_time = st.columns([3, 1])
 with col_title:
     st.markdown(f"""
