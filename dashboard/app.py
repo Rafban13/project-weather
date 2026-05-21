@@ -382,10 +382,20 @@ with col_time:
 
 # ── History selector ──────────────────────────────────────────────────────────
 hours_options = {"6h": 6, "12h": 12, "24h": 24, "48h": 48, "7 days": 168}
-selected_label = st.radio(
-    "History period", list(hours_options.keys()),
-    horizontal=True, index=2, label_visibility="collapsed"
-)
+
+if "selected_hours_label" not in st.session_state:
+    st.session_state.selected_hours_label = "24h"
+
+cols_btn = st.columns(len(hours_options))
+for i, (label, val) in enumerate(hours_options.items()):
+    with cols_btn[i]:
+        is_active = st.session_state.selected_hours_label == label
+        btn_style = "background:#1971c2;color:white;border:none;" if is_active else "background:white;color:#1a2b4a;border:1px solid #bee3f8;"
+        if st.button(label, key=f"btn_{label}", use_container_width=False):
+            st.session_state.selected_hours_label = label
+            st.rerun()
+
+selected_label = st.session_state.selected_hours_label
 selected_hours = hours_options[selected_label]
 
 # ── Load data ─────────────────────────────────────────────────────────────────
