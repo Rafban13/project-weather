@@ -39,6 +39,8 @@ device_public_ip = None
 current_page = "wifi"
 selected_network_index = 0
 last_sound_played = 0
+last_outdoor_temp = 0
+last_outdoor_humidity = 0
 
 # LABELS PAGE WIFI
 wifi_title = M5Label('-- WiFi Setup --', x=60, y=5, color=0x00ffff, font=FONT_MONT_14)
@@ -263,14 +265,27 @@ def play_weather_spoken():
     except:
         status_label.set_text('TTS err')
 
+
+def get_outdoor_weather():
+    global last_outdoor_temp, last_outdoor_humidity
+    try:
+        r = urequests.get(FLASK_URL + "/get-outdoor-weather?ip=" + (device_public_ip or "8.8.8.8"))
+        if r.status_code == 200:
+            d = r.json()
+            last_outdoor_temp = d["current"]["main"]["temp"]
+            last_outdoor_humidity = d["current"]["main"]["humidity"]
+        r.close()
+    except:
+        pass
+
 def send_data(temp, hum, co2):
     try:
         data = {
             "indoor_temp": temp,
             "indoor_humidity": hum,
             "indoor_air_quality": co2,
-            "outdoor_temp": 0,
-            "outdoor_humidity": 0,
+            "outdoor_temp": last_outdoor_temp,
+            "outdoor_humidity": last_outdoor_humidity,
             "ip_address": device_public_ip or "unknown",
             "device_id": DEVICE_ID
         }
@@ -323,9 +338,10 @@ if wlan.isconnected():
     sync_ntp()
     time.sleep(1)
     show_dashboard_page()
-    update_weather_image()
+    get_outdoor_weather()
+    update_weather_image()  
 
-data_last_sent = time.time() - 290
+data_last_sent = time.time() - 250
 weather_last_checked = time.time() - 115
 time_last_updated = time.time() - 55
 
