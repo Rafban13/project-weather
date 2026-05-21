@@ -40,3 +40,16 @@ class BigQueryClient:
             raise Exception(f"Failed to insert : {errors}")
             
         return "Data inserted successfully"
+    
+    def get_latest_sensor_data(self) -> dict:      # ← tu ajoutes ici
+        """Return the most recent row from sensor_data for device startup sync."""
+        query = f"""
+            SELECT *
+            FROM `{self.table_id}`
+            ORDER BY measurement_time DESC
+            LIMIT 1
+        """
+        result = self.client.query(query).result()
+        for row in result:
+            return dict(row)
+        return {}
