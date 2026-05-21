@@ -519,9 +519,8 @@ if not history_df.empty:
     ch1, ch2 = st.columns(2)
     with ch1: st.plotly_chart(make_line_chart(history_df, "indoor_temp",        "rgb(25,113,194)",  "Indoor Temperature",  "°C"), use_container_width=True)
     with ch2: st.plotly_chart(make_line_chart(history_df, "indoor_humidity",    "rgb(51,154,240)",  "Indoor Humidity",     "%"),  use_container_width=True)
-    ch3, ch4 = st.columns(2)
-    with ch3: st.plotly_chart(make_line_chart(history_df, "indoor_air_quality", "rgb(64,192,87)",   "CO₂ Level (ppm)",     " ppm"),   use_container_width=True)
-    with ch4: st.plotly_chart(make_line_chart(history_df, "outdoor_temp",       "rgb(255,159,67)",  "Outdoor Temperature", "°C"), use_container_width=True)
+    ch3, = st.columns(1)
+     st.plotly_chart(make_line_chart(history_df, "indoor_air_quality", "rgb(64,192,87)",   "CO₂ Level (ppm)",     " ppm"),   use_container_width=True)
 else:
     st.info("No historical data available for this period.")
 
