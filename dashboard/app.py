@@ -508,7 +508,10 @@ if isinstance(forecast, list) and forecast:
             <div class="forecast-card">
                 <div class="forecast-day">{format_date(day['date'])}</div>
                 <img src="https://openweathermap.org/img/wn/{day['icon']}@2x.png" width="52" style="margin:2px 0">
-                <div class="forecast-temp-max">{day['temp_max']:.0f}°<span class="forecast-temp-min"> {day['temp_min']:.0f}°</span></div>
+                <div style="margin:4px 0;">
+                    <span style="font-family:Nunito,sans-serif;font-size:20px;font-weight:800;color:#e67700;">↑{day['temp_max']:.0f}°</span>
+                    <span style="font-family:Nunito,sans-serif;font-size:16px;font-weight:600;color:#94b8d6;margin-left:6px;">↓{day['temp_min']:.0f}°</span>
+                </div>
                 <div class="forecast-desc">{day['description']}</div>
                 <div style="font-size:11px;color:#74c0fc;margin-top:6px;font-weight:600;">💧 {day['humidity']}%</div>
             </div>""", unsafe_allow_html=True)
