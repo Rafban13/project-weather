@@ -7,7 +7,9 @@ import time
 
 from config import (
     HUMIDITY_LOW_THRESHOLD,
-    AIR_QUALITY_BAD_THRESHOLD,
+    CO2_MODERATE_THRESHOLD,
+    CO2_BAD_THRESHOLD,
+    CO2_ALERT_THRESHOLD,
     HISTORY_HOURS,
 )
 import bigquery_client as bq
@@ -306,12 +308,13 @@ div[data-testid="stRadio"] > div {
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def air_quality_label(aqi):
-    if aqi is None: return "—", "badge-good"
-    if aqi < 50:    return "Excellent", "badge-good"
-    elif aqi < 100: return "Good", "badge-good"
-    elif aqi < 150: return "Moderate", "badge-moderate"
-    else:           return "Poor", "badge-bad"
+def air_quality_label(co2):
+    """Label based on CO2 in ppm."""
+    if co2 is None: return "—", "badge-good"
+    if co2 < 600:    return "Excellent", "badge-good"
+    elif co2 < 800:  return "Good", "badge-good"
+    elif co2 < 1200: return "Moderate", "badge-moderate"
+    else:            return "Poor", "badge-bad"
 
 
 def format_date(dt):
@@ -412,8 +415,11 @@ if latest is not None:
     if latest.get("indoor_humidity") is not None and latest["indoor_humidity"] < HUMIDITY_LOW_THRESHOLD:
         st.markdown(f'<div class="alert-danger">💧 Low indoor humidity: <strong>{latest["indoor_humidity"]:.1f}%</strong> — below threshold of {HUMIDITY_LOW_THRESHOLD}%</div>', unsafe_allow_html=True)
         has_alert = True
-    if latest.get("indoor_air_quality") is not None and latest["indoor_air_quality"] > AIR_QUALITY_BAD_THRESHOLD:
-        st.markdown(f'<div class="alert-warning">🌫️ Poor air quality: <strong>{latest["indoor_air_quality"]:.0f} AQI</strong> — above threshold of {AIR_QUALITY_BAD_THRESHOLD}</div>', unsafe_allow_html=True)
+    if latest.get("indoor_air_quality") is not None and latest["indoor_air_quality"] > CO2_ALERT_THRESHOLD:
+        st.markdown(f'<div class="alert-danger">🌫️ Very poor air quality: <strong>{latest["indoor_air_quality"]:.0f} ppm CO₂</strong> — above {CO2_ALERT_THRESHOLD} ppm</div>', unsafe_allow_html=True)
+        has_alert = True
+    elif latest.get("indoor_air_quality") is not None and latest["indoor_air_quality"] > CO2_BAD_THRESHOLD:
+        st.markdown(f'<div class="alert-warning">🌫️ Poor air quality: <strong>{latest["indoor_air_quality"]:.0f} ppm CO₂</strong> — above {CO2_BAD_THRESHOLD} ppm</div>', unsafe_allow_html=True)
         has_alert = True
 if not has_alert:
     st.markdown('<div class="alert-ok">✅ All systems normal — no active alerts</div>', unsafe_allow_html=True)
@@ -442,7 +448,7 @@ if latest is not None:
         <div class="metric-card air">
             <div class="metric-label">🌿 Air Quality</div>
             <div class="metric-value {aqi_class}" style="font-size:28px;padding-top:4px;">{aqi_label}</div>
-            <div class="metric-sub">{latest['indoor_air_quality']:.0f} AQI</div>
+            <div class="metric-sub">{latest['indoor_air_quality']:.0f} ppm CO₂</div>
         </div>""", unsafe_allow_html=True)
     with c4:
         ts = pd.to_datetime(latest["measurement_time"]).strftime("%H:%M")
@@ -514,7 +520,7 @@ if not history_df.empty:
     with ch1: st.plotly_chart(make_line_chart(history_df, "indoor_temp",        "rgb(25,113,194)",  "Indoor Temperature",  "°C"), use_container_width=True)
     with ch2: st.plotly_chart(make_line_chart(history_df, "indoor_humidity",    "rgb(51,154,240)",  "Indoor Humidity",     "%"),  use_container_width=True)
     ch3, ch4 = st.columns(2)
-    with ch3: st.plotly_chart(make_line_chart(history_df, "indoor_air_quality", "rgb(64,192,87)",   "Air Quality (AQI)",   ""),   use_container_width=True)
+    with ch3: st.plotly_chart(make_line_chart(history_df, "indoor_air_quality", "rgb(64,192,87)",   "CO₂ Level (ppm)",     " ppm"),   use_container_width=True)
     with ch4: st.plotly_chart(make_line_chart(history_df, "outdoor_temp",       "rgb(255,159,67)",  "Outdoor Temperature", "°C"), use_container_width=True)
 else:
     st.info("No historical data available for this period.")
@@ -524,7 +530,7 @@ if not daily_df.empty:
     st.markdown('<div class="section-title">📊 Statistics — Last 7 Days</div>', unsafe_allow_html=True)
     daily_df["day"] = daily_df["day"].apply(lambda d: format_date(str(d)))
     daily_df.columns = ["Day", "Avg Indoor Temp (°C)", "Min (°C)", "Max (°C)",
-                        "Avg Humidity (%)", "Avg AQI", "Avg Outdoor Temp (°C)"]
+                        "Avg Humidity (%)", "Avg CO₂ (ppm)", "Avg Outdoor Temp (°C)"]
     st.dataframe(daily_df, use_container_width=True, hide_index=True)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
