@@ -13,6 +13,7 @@ class SpeechToTextClient:
                 encoding=speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED,
                 sample_rate_hertz=16000,
                 language_code="fr-FR",
+                alternative_language_codes=["en-US"],
                 enable_automatic_punctuation=True,
             )
             response = self.client.recognize(config=config, audio=audio)

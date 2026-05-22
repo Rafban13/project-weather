@@ -127,7 +127,7 @@ fc_hint  = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 qa_title  = M5Label('', x=85, y=8,   color=C_ACCENT, font=FONT_MONT_14)
 qa_line   = M5Label('', x=12, y=28,  color=C_DIM,    font=FONT_MONT_10)
 qa_info   = M5Label('', x=12, y=50,  color=C_WHITE,  font=FONT_MONT_14)
-qa_info2  = M5Label('', x=12, y=75,  color=C_MID,    font=FONT_MONT_10)
+qa_info2  = M5Label('', x=12, y=75,  color=C_MID,    font=FONT_MONT_14)
 qa_status = M5Label('', x=12, y=110, color=C_YELLOW, font=FONT_MONT_14)
 qa_hint   = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
@@ -413,6 +413,13 @@ def _play_weather_tts():
 #  Q&A — RECORD + ASK
 # ============================================================
 def _ask_question():
+    # Nettoyer le micro au cas où il serait encore actif
+    try:
+     MIC.deinit(1000)
+    except:
+        pass
+    gc.collect()
+    
     global is_recording
     if not wlan.isconnected():
         qa_status.set_text('No WiFi')
@@ -438,15 +445,15 @@ def _ask_question():
         gc.collect()
         MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
                   buffer_length_ms=1000, block_length_ms=100)
-        MIC.recordStart(open('/flash/question.wav', 'wb'), 4000)
+        MIC.recordStart(open('/flash/question.wav', 'wb'), 2000)  # ← 2 secondes
 
-        # Barre de progression — 4 secondes
-        bar_full = 20  # nombre de caractères max
+        # Barre de progression — 2 secondes
+        bar_full = 20
         for i in range(bar_full, -1, -1):
             filled = '|' * i
             empty  = ' ' * (bar_full - i)
             qa_info2.set_text('[{}{}]'.format(filled, empty))
-            time.sleep_ms(200)  # 20 x 200ms = 4 secondes
+            time.sleep_ms(100)  # ← 20 x 100ms = 2 secondes exactement
 
         MIC.waitRecordDone(6000)
         MIC.deinit(10000)
