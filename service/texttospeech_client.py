@@ -11,7 +11,7 @@ class TextToSpeechClient:
         )
         
         self.audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.LINEAR16
+            audio_encoding=texttospeech.AudioEncoding.LINEAR16,
             sample_rate_hertz=16000
         )
 
