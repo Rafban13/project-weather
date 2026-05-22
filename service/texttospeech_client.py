@@ -7,11 +7,12 @@ class TextToSpeechClient:
         
         self.voice = texttospeech.VoiceSelectionParams(
             language_code="en-US",
-            name="en-US-Casual-K"
+            name="en-US-Neural2-F"
         )
         
         self.audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16
+            sample_rate_hertz=16000
         )
 
     def generate_speech(self, text: str) -> bytes:
