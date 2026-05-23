@@ -245,7 +245,7 @@ def show_qa_page():
     qa_title.set_text('//  Ask Me')
     qa_line.set_text('________________________________')
     qa_info.set_text('Press B to record')
-    qa_info2.set_text('Speak clearly for 2 seconds')
+    qa_info2.set_text('Speak clearly for 5 seconds')
     qa_status.set_text('Ready !')
     qa_status.set_text_color(C_GREEN)
     qa_hint.set_text('< Dashboard       Forecast >')
@@ -422,79 +422,77 @@ def _play_weather_tts():
 
 # ============================================================
 #  Q&A — RECORD + ASK
+#  Pattern: un seul cycle begin -> record -> deinit -> send -> play
+#  par appui sur B. Feedback visuel via LED uniquement (UIFlow1
+#  ne rafraichit pas l'ecran depuis un callback de bouton).
 # ============================================================
 def _ask_question():
     global is_recording
 
-    # Efface l'écran immédiatement
-    qa_status.set_text('')
-    qa_info2.set_text('')
-
+    # Garde-fou : pas de question sans WiFi (sinon urequests va planter)
     if not wlan.isconnected():
-        qa_status.set_text('No WiFi')
-        qa_status.set_text_color(C_RED)
         led_set(LED_RED)
         time.sleep(2)
         led_set(LED_CYAN, 15)
-        show_qa_page()
         return
 
     try:
+        # Flag global pour empecher le PIR TTS de se declencher pendant qu'on
+        # enregistre (sinon conflit speaker/mic sur le bus I2S)
         is_recording = True
 
-        # ── Countdown ────────────────────────────────────────
-        qa_status.set_text('Get ready...')
-        qa_status.set_text_color(C_YELLOW)
+        # ── Countdown : laisse 2 sec a l'utilisateur pour se preparer ──
+        # LED orange = preparation
         led_set(LED_ORANGE)
         time.sleep(2)
 
-        # ── Recording + barre de progression ─────────────────
-        qa_status.set_text('Recording...')
-        qa_status.set_text_color(C_RED)
+        # ── Enregistrement (LED violette = recording) ───────────────
         led_set(LED_PURPLE)
 
+        # gc.collect() avant d'allouer le buffer du micro : on maximise
+        # la RAM libre pour eviter une fragmentation du heap
         gc.collect()
 
-        # 1. Allume le micro ici
+        # Init du micro PDM (pin 0 = WS, pin 34 = data sur Core2)
         MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
                   buffer_length_ms=1000, block_length_ms=100)
 
+        # 5000 ms = 5 secondes de capture, assez pour une phrase complete
         f_mic = open('/flash/question.wav', 'wb')
-        MIC.recordStart(f_mic, 2000)
+        MIC.recordStart(f_mic, 5000)
 
-        # Barre de progression — 2 secondes (15 chars x 133ms)
-        bar_full = 15
-        for i in range(bar_full, -1, -1):
-            filled = '|' * i
-            empty  = ' ' * (bar_full - i)
-            qa_info2.set_text('[{}{}]'.format(filled, empty))
-            time.sleep_ms(133)
-
-        # ... (début de l'enregistrement)
-        MIC.waitRecordDone(5000)
+        # Bloque jusqu'a ce que recordStart ait fini d'ecrire (timeout 7s)
+        MIC.waitRecordDone(7000)
         print("1 - Enregistrement OK")
-        
-        f_mic.close()
-        print("2 - Fichier fermé OK")
-        
-        MIC.deinit() # <-- STRICTEMENT VIDE ! Surtout pas de 3000
-        print("3 - Micro éteint OK")
-        
-        time.sleep_ms(200)
-        gc.collect()
-        print("4 - Mémoire nettoyée OK")
 
-        # ── Envoi ─────────────────────────────────────────────
-        qa_info2.set_text('')
-        qa_status.set_text('Processing...')
-        qa_status.set_text_color(C_YELLOW)
+        # Fermer le fichier AVANT de deinit le micro :
+        # si on deinit avant close, la tache de fond du driver PDM
+        # peut encore essayer d'ecrire dans un fichier ferme -> crash
+        f_mic.close()
+        print("2 - Fichier ferme OK")
+
+        # deinit(timeout_ms) : attend que la tache de fond du driver PDM
+        # termine ses dernieres ecritures avant de liberer le bus I2S.
+        # L'argument est obligatoire dans cette version d'UIFlow1.
+        MIC.deinit(2000)
+        print("3 - Micro eteint OK")
+
+        # Pause pour laisser le bus I2S se liberer cote hardware
+        # avant que le speaker essaie de l'utiliser
+        time.sleep_ms(500)
+        gc.collect()
+        print("4 - Memoire nettoyee OK")
+
+        # ── Envoi au cloud (LED orange = processing) ────────────────
         led_set(LED_ORANGE)
 
+        # Lecture du WAV en RAM pour l'envoyer
         with open('/flash/question.wav', 'rb') as f:
             wav_data = f.read()
-
         print("5 - Taille de la question :", len(wav_data), "octets")
 
+        # POST a Flask : audio brut en body, IP en query string
+        # pour que le backend puisse geolocaliser et chercher la meteo locale
         r = urequests.post(
             FLASK_URL + '/ask-question?ip=' + (device_public_ip or '8.8.8.8'),
             data=wav_data,
@@ -503,105 +501,72 @@ def _ask_question():
                 'Content-Length': str(len(wav_data))
             }
         )
+
+        # Libere la RAM du buffer wav_data tout de suite
         del wav_data
         gc.collect()
 
         if r.status_code == 200:
-            print("6 - Réponse du serveur reçue ! Taille :", len(r.content), "octets")
-            
+            print("6 - Reponse recue ! Taille :", len(r.content), "octets")
+
+            # Sauvegarde la reponse audio sur la flash
             with open('/flash/answer.wav', 'wb') as f:
                 f.write(r.content)
             r.close()
             del r
             gc.collect()
+            print("7 - Fichier reponse sauvegarde")
 
-            print("7 - Fichier réponse sauvegardé")
-
-            qa_status.set_text('Playing...')
-            qa_status.set_text_color(C_GREEN)
-            led_set(LED_WHITE)
-            
-            print("8 - Lancement du haut-parleur...")
-            speaker.playWAV('/flash/answer.wav', volume=10) # Volume à fond !
-            print("9 - Lecture terminée !")
-
-            qa_status.set_text('Press B to ask again')
-            qa_status.set_text_color(C_MID)
-            led_set(LED_CYAN, 15)
-
-        else:
-            print("ERREUR SERVEUR :", r.status_code)
-            r.close()
-            qa_status.set_text("Didn't catch that, retry")
-            
-
-        # 2. Coupe le micro pour libérer le bus I2S
-        MIC.deinit()
-        time.sleep_ms(200)  # Pause vitale pour purger la mémoire
-        gc.collect()
-
-        # ── Envoi ─────────────────────────────────────────────
-        qa_info2.set_text('')
-        qa_status.set_text('Processing...')
-        qa_status.set_text_color(C_YELLOW)
-        led_set(LED_ORANGE)
-
-        with open('/flash/question.wav', 'rb') as f:
-            wav_data = f.read()
-
-        r = urequests.post(
-            FLASK_URL + '/ask-question?ip=' + (device_public_ip or '8.8.8.8'),
-            data=wav_data,
-            headers={
-                'Content-Type': 'audio/wav',
-                'Content-Length': str(len(wav_data))
-            }
-        )
-        del wav_data
-        gc.collect()
-
-        if r.status_code == 200:
-            with open('/flash/answer.wav', 'wb') as f:
-                f.write(r.content)
-            r.close()
-            del r
-            gc.collect()
-
-            qa_status.set_text('Playing...')
-            qa_status.set_text_color(C_GREEN)
+            # ── Lecture de la reponse (LED blanche = playing) ────
             led_set(LED_WHITE)
 
-            # 3. Le speaker peut jouer sans conflit I2S
+            print("8 - Lancement haut-parleur...")
             speaker.playWAV('/flash/answer.wav', volume=6)
+            print("9 - Lecture terminee !")
 
+            # Tentative de liberation du bus I2S cote speaker
+            # pour eviter le conflit avec MIC.begin() au prochain appui sur B
+            try:
+                speaker.deinit()
+                print("10 - Speaker deinit OK")
+            except Exception as e:
+                print("10 - Speaker deinit non supporte:", str(e))
+
+            # Pause pour laisser le bus I2S se liberer cote hardware
+            time.sleep_ms(500)
+
+            # Nettoyage des WAV pour ne pas saturer la flash
             _cleanup_wav()
             gc.collect()
 
-            qa_status.set_text('Press B to ask again')
-            qa_status.set_text_color(C_MID)
+            # Retour a l'etat "Ready" (LED cyan)
             led_set(LED_CYAN, 15)
 
         else:
+            # Erreur cote serveur : on log, on previent l'utilisateur
+            print("ERREUR SERVEUR :", r.status_code)
+            try:
+                print("REPONSE BRUTE :", r.text[:300])
+            except:
+                print("REPONSE BRUTE : (illisible)")
             r.close()
             _cleanup_wav()
-            qa_status.set_text("Didn't catch that, retry")
-            qa_status.set_text_color(C_RED)
             led_set(LED_RED)
             time.sleep(2)
-            qa_status.set_text('Ready !')
-            qa_status.set_text_color(C_GREEN)
             led_set(LED_CYAN, 15)
 
     except Exception as e:
+        # Filet de securite global : si n'importe quoi crashe,
+        # on log l'erreur et on remet la LED en cyan
+        print("EXCEPTION CAUGHT:", str(e))
+        print("EXCEPTION TYPE:", type(e).__name__)
         _cleanup_wav()
-        qa_status.set_text('Err: {}'.format(str(e)[:20]))
-        qa_status.set_text_color(C_RED)
         led_set(LED_RED)
         time.sleep(2)
-        qa_status.set_text('Ready !')
-        qa_status.set_text_color(C_GREEN)
         led_set(LED_CYAN, 15)
     finally:
+        # Toujours liberer le flag d'enregistrement, meme en cas d'erreur,
+        # sinon le PIR TTS reste bloque pour toujours
         is_recording = False
         gc.collect()
 
@@ -662,7 +627,6 @@ btnC.wasPressed(_btn_c)
 _cleanup_wav()      # Nettoie les vieux fichiers WAV au démarrage
 led_set(LED_BLUE)
 show_wifi_page()
-# Note: MIC.begin() est appelé dans _ask_question() uniquement
 
 if wlan.isconnected():
     led_set(LED_ORANGE)
