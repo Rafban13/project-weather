@@ -233,8 +233,9 @@ def _get_forecast_for_city(city_name: str) -> dict:
 def ask_question():
     """
     Receive audio from M5Stack, transcribe with Speech-to-Text,
-    answer with Gemini (weather + BigQuery context), return audio WAV.
+    answer with Gemini (weather + BigQuery context), return audio WAV or JSON text.
     Supports questions about any city worldwide.
+    Optional query param: text_only=true → returns JSON instead of WAV
     """
     try:
         audio_bytes = request.data
@@ -242,12 +243,14 @@ def ask_question():
             return jsonify({"error": "No audio data received"}), 400
 
         ip = request.args.get('ip', '8.8.8.8')
+        text_only = request.args.get('text_only', 'false').lower() == 'true'
 
         # 1. Transcribe audio → text
         question = speech_to_text_client.transcribe_audio(audio_bytes)
         if not question:
-            # Return a "didn't understand" audio response
             sorry = "Sorry, I didn't catch that. Could you please repeat your question?"
+            if text_only:
+                return jsonify({"answer": sorry, "question": ""}), 200
             audio = text_to_speech_client.generate_speech(sorry)
             temp_file = os.path.join(TMP_DIR, 'answer_output.wav')
             with open(temp_file, 'wb') as f:
@@ -260,18 +263,17 @@ def ask_question():
         local_city = location_data.get('city', 'your location')
         current_weather = weather_client.fetch_weather_data(lat, lon, current_weather=True)
         forecast_data   = weather_client.fetch_weather_data(lat, lon, current_weather=False)
-        next_days = forecast_data['list'][:8]  # next 24h
+        next_days = forecast_data['list'][:8]
         latest_data = bq_client.get_latest_sensor_data()
 
         # 3. Detect if question mentions another city
-        # Ask Gemini to extract city name from question
         city_extract_prompt = f"""
 Extract the city name from this question if it mentions a specific city.
 Question: "{question}"
 Reply with ONLY the city name, or reply with "none" if no city is mentioned.
 Examples:
 - "What is the weather in Geneva?" → Geneva
-- "Will it rain in Tokyo tomorrow?" → Tokyo  
+- "Will it rain in Tokyo tomorrow?" → Tokyo
 - "What is the temperature outside?" → none
 - "Should I take an umbrella?" → none
 """
@@ -310,9 +312,11 @@ Always respond in English, regardless of the language the user speaks."""
         # 6. Generate answer with Gemini
         answer = vertex_ai_client.get_weather_description(context, SYSTEM_INSTRUCTION)
 
-        # 7. Convert answer to speech
-        audio = text_to_speech_client.generate_speech(answer)
+        # 7. Return text or audio based on request parameter
+        if text_only:
+            return jsonify({"answer": answer, "question": question}), 200
 
+        audio = text_to_speech_client.generate_speech(answer)
         temp_file = os.path.join(TMP_DIR, 'answer_output.wav')
         with open(temp_file, 'wb') as f:
             f.write(audio)
