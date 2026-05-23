@@ -1,15 +1,16 @@
 # ============================================================
 #  Project Weather — M5Stack Core2
-#  Dark Minimalist UI — v3
+#  Dark Minimalist UI — Final
 #  Features: WiFi, Dashboard, Forecast, PIR TTS, Q&A,
 #            Alerts, RGB LEDs, Speech-to-Text
 # ============================================================
 
 from m5stack_ui import M5Screen, M5Label, M5Img, FONT_MONT_10, FONT_MONT_14, FONT_MONT_34
 from m5stack import btnA, btnB, btnC, speaker
-from m5stack import rgb  # ← RGB LEDs
+from m5stack import rgb
 import unit
-import MicrophonePDM as MIC  # ← Microphone
+import MicrophonePDM as MIC
+import uos
 from network import WLAN, STA_IF
 import urequests
 import utime as time
@@ -67,19 +68,18 @@ C_DIM     = 0x333344
 C_MID     = 0x7777AA
 C_WHITE   = 0xDDDDFF
 
-# ── LED colours (RGB hex) ─────────────────────────────────────
-LED_BLUE   = 0x0000FF   # boot / startup
-LED_ORANGE = 0xFF6600   # connecting / loading
-LED_GREEN  = 0x00FF00   # success / connected
-LED_RED    = 0xFF0000   # error
-LED_PURPLE = 0x9900FF   # recording voice
-LED_WHITE  = 0xFFFFFF   # TTS speaking
-LED_CYAN   = 0x00FFFF   # dashboard idle
-LED_OFF    = 0x000000   # off
+# ── LED colours ───────────────────────────────────────────────
+LED_BLUE   = 0x0000FF
+LED_ORANGE = 0xFF6600
+LED_GREEN  = 0x00FF00
+LED_RED    = 0xFF0000
+LED_PURPLE = 0x9900FF
+LED_WHITE  = 0xFFFFFF
+LED_CYAN   = 0x00FFFF
+LED_OFF    = 0x000000
 
 # ── LED helpers ───────────────────────────────────────────────
 def led_set(color, brightness=30):
-    """Set all 10 side LEDs to a color."""
     rgb.setColorAll(color)
     rgb.setBrightness(brightness)
 
@@ -164,6 +164,14 @@ def fmt_time():
     except:
         return ''
 
+def _cleanup_wav():
+    """Supprime les fichiers WAV pour libérer la flash."""
+    for f in ['/flash/question.wav', '/flash/answer.wav', '/flash/weather.wav']:
+        try:
+            uos.remove(f)
+        except:
+            pass
+
 # ── Hide helpers ─────────────────────────────────────────────
 def hide_wifi():
     wf_title.set_text(''); wf_hint.set_text(''); wf_line.set_text('')
@@ -237,7 +245,7 @@ def show_qa_page():
     qa_title.set_text('//  Ask Me')
     qa_line.set_text('________________________________')
     qa_info.set_text('Press B to record')
-    qa_info2.set_text('Speak clearly for 4 seconds')
+    qa_info2.set_text('Speak clearly for 2 seconds')
     qa_status.set_text('Ready !')
     qa_status.set_text_color(C_GREEN)
     qa_hint.set_text('< Dashboard       Forecast >')
@@ -265,7 +273,7 @@ def connect_selected():
     ssid     = NETWORK_NAMES[selected_network_index]
     password = KNOWN_NETWORKS[ssid]
     wf_status.set_text('Connecting to {}...'.format(ssid))
-    led_set(LED_ORANGE)  # ← orange pendant connexion
+    led_set(LED_ORANGE)
     if wlan.isconnected():
         wlan.disconnect(); time.sleep(1)
     wlan.connect(ssid, password)
@@ -273,7 +281,7 @@ def connect_selected():
     while not wlan.isconnected() and time.time() - t0 < 15:
         time.sleep(1)
     if wlan.isconnected():
-        led_set(LED_GREEN)  # ← vert = connecté
+        led_set(LED_GREEN)
         wf_status.set_text('Connected  OK')
         time.sleep(0.5)
         try:
@@ -286,17 +294,16 @@ def connect_selected():
         show_dashboard_page()
         _fetch_weather_img()
     else:
-        led_set(LED_RED)  # ← rouge = échec
+        led_set(LED_RED)
         wf_status.set_text('Failed — try again')
 
 # ============================================================
 #  BIGQUERY STARTUP SYNC
 # ============================================================
 def _sync_from_bigquery():
-    """At startup, load last known values from BigQuery."""
     global last_outdoor_temp, last_outdoor_humidity
     try:
-        led_set(LED_ORANGE)  # ← orange pendant sync
+        led_set(LED_ORANGE)
         r = urequests.get(FLASK_URL + '/sync-from-bigquery')
         if r.status_code == 200:
             d = r.json()
@@ -311,7 +318,7 @@ def _sync_from_bigquery():
 # ============================================================
 def _fetch_weather_img():
     try:
-        led_set(LED_ORANGE, 10)  # ← orange pendant chargement
+        led_set(LED_ORANGE, 10)
         r = urequests.get(
             FLASK_URL + '/get-weather-image?ip=' + (device_public_ip or '8.8.8.8'))
         if r.status_code == 200:
@@ -321,7 +328,7 @@ def _fetch_weather_img():
             db_wimg.set_img_src('/flash/res/current_weather.png')
         else:
             r.close()
-        led_set(LED_CYAN, 15)  # ← retour cyan
+        led_set(LED_CYAN, 15)
     except:
         led_set(LED_CYAN, 15)
 
@@ -342,7 +349,6 @@ def _fetch_forecast_img():
         led_set(LED_CYAN, 15)
 
 def _send_data(temp, hum, co2):
-    """Send indoor sensor data to Flask → BigQuery."""
     try:
         payload = {
             'indoor_temp':        temp,
@@ -379,13 +385,14 @@ def _send_data(temp, hum, co2):
 #  PIR — WEATHER ANNOUNCEMENT  (max once per hour)
 # ============================================================
 def _play_weather_tts():
-    """Announce weather when motion detected — max once every 3600s."""
     global last_tts_played
+    if is_recording:    # ← ne pas interrompre un enregistrement
+        return
     now = time.time()
     if now - last_tts_played < 3600:
         return
     try:
-        led_set(LED_WHITE)  # ← blanc = TTS en cours
+        led_set(LED_WHITE)
         db_status.set_text('TTS...')
         db_status.set_text_color(C_YELLOW)
         r = urequests.post(
@@ -398,6 +405,10 @@ def _play_weather_tts():
             r.close()
             speaker.playWAV('/flash/weather.wav', volume=6)
             last_tts_played = now
+            try:
+                uos.remove('/flash/weather.wav')
+            except:
+                pass
         else:
             r.close()
         db_status.set_text('')
@@ -413,53 +424,123 @@ def _play_weather_tts():
 #  Q&A — RECORD + ASK
 # ============================================================
 def _ask_question():
-    # Nettoyer le micro au cas où il serait encore actif
-    try:
-     MIC.deinit(1000)
-    except:
-        pass
-    gc.collect()
-    
     global is_recording
+
+    # Efface l'écran immédiatement
+    qa_status.set_text('')
+    qa_info2.set_text('')
+
     if not wlan.isconnected():
         qa_status.set_text('No WiFi')
         qa_status.set_text_color(C_RED)
         led_set(LED_RED)
         time.sleep(2)
         led_set(LED_CYAN, 15)
+        show_qa_page()
         return
+
     try:
         is_recording = True
 
         # ── Countdown ────────────────────────────────────────
-        qa_status.set_text('Recording in 2 seconds...')
+        qa_status.set_text('Get ready...')
         qa_status.set_text_color(C_YELLOW)
         led_set(LED_ORANGE)
         time.sleep(2)
 
-        # ── Recording + progress bar ─────────────────────────
+        # ── Recording + barre de progression ─────────────────
         qa_status.set_text('Recording...')
         qa_status.set_text_color(C_RED)
         led_set(LED_PURPLE)
 
         gc.collect()
+
+        # 1. Allume le micro ici
         MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
                   buffer_length_ms=1000, block_length_ms=100)
-        MIC.recordStart(open('/flash/question.wav', 'wb'), 2000)  # ← 2 secondes
 
-        # Barre de progression — 2 secondes
-        bar_full = 20
+        f_mic = open('/flash/question.wav', 'wb')
+        MIC.recordStart(f_mic, 2000)
+
+        # Barre de progression — 2 secondes (15 chars x 133ms)
+        bar_full = 15
         for i in range(bar_full, -1, -1):
             filled = '|' * i
             empty  = ' ' * (bar_full - i)
             qa_info2.set_text('[{}{}]'.format(filled, empty))
-            time.sleep_ms(100)  # ← 20 x 100ms = 2 secondes exactement
+            time.sleep_ms(133)
 
-        MIC.waitRecordDone(6000)
-        MIC.deinit(10000)
+        # ... (début de l'enregistrement)
+        MIC.waitRecordDone(5000)
+        print("1 - Enregistrement OK")
+        
+        f_mic.close()
+        print("2 - Fichier fermé OK")
+        
+        MIC.deinit() # <-- STRICTEMENT VIDE ! Surtout pas de 3000
+        print("3 - Micro éteint OK")
+        
+        time.sleep_ms(200)
+        gc.collect()
+        print("4 - Mémoire nettoyée OK")
+
+        # ── Envoi ─────────────────────────────────────────────
+        qa_info2.set_text('')
+        qa_status.set_text('Processing...')
+        qa_status.set_text_color(C_YELLOW)
+        led_set(LED_ORANGE)
+
+        with open('/flash/question.wav', 'rb') as f:
+            wav_data = f.read()
+
+        print("5 - Taille de la question :", len(wav_data), "octets")
+
+        r = urequests.post(
+            FLASK_URL + '/ask-question?ip=' + (device_public_ip or '8.8.8.8'),
+            data=wav_data,
+            headers={
+                'Content-Type': 'audio/wav',
+                'Content-Length': str(len(wav_data))
+            }
+        )
+        del wav_data
         gc.collect()
 
-        # ── Sending ──────────────────────────────────────────
+        if r.status_code == 200:
+            print("6 - Réponse du serveur reçue ! Taille :", len(r.content), "octets")
+            
+            with open('/flash/answer.wav', 'wb') as f:
+                f.write(r.content)
+            r.close()
+            del r
+            gc.collect()
+
+            print("7 - Fichier réponse sauvegardé")
+
+            qa_status.set_text('Playing...')
+            qa_status.set_text_color(C_GREEN)
+            led_set(LED_WHITE)
+            
+            print("8 - Lancement du haut-parleur...")
+            speaker.playWAV('/flash/answer.wav', volume=10) # Volume à fond !
+            print("9 - Lecture terminée !")
+
+            qa_status.set_text('Press B to ask again')
+            qa_status.set_text_color(C_MID)
+            led_set(LED_CYAN, 15)
+
+        else:
+            print("ERREUR SERVEUR :", r.status_code)
+            r.close()
+            qa_status.set_text("Didn't catch that, retry")
+            
+
+        # 2. Coupe le micro pour libérer le bus I2S
+        MIC.deinit()
+        time.sleep_ms(200)  # Pause vitale pour purger la mémoire
+        gc.collect()
+
+        # ── Envoi ─────────────────────────────────────────────
         qa_info2.set_text('')
         qa_status.set_text('Processing...')
         qa_status.set_text_color(C_YELLOW)
@@ -471,7 +552,10 @@ def _ask_question():
         r = urequests.post(
             FLASK_URL + '/ask-question?ip=' + (device_public_ip or '8.8.8.8'),
             data=wav_data,
-            headers={'Content-Type': 'audio/wav'}
+            headers={
+                'Content-Type': 'audio/wav',
+                'Content-Length': str(len(wav_data))
+            }
         )
         del wav_data
         gc.collect()
@@ -482,39 +566,53 @@ def _ask_question():
             r.close()
             del r
             gc.collect()
+
             qa_status.set_text('Playing...')
             qa_status.set_text_color(C_GREEN)
             led_set(LED_WHITE)
+
+            # 3. Le speaker peut jouer sans conflit I2S
             speaker.playWAV('/flash/answer.wav', volume=6)
+
+            _cleanup_wav()
+            gc.collect()
+
             qa_status.set_text('Press B to ask again')
             qa_status.set_text_color(C_MID)
             led_set(LED_CYAN, 15)
+
         else:
             r.close()
-            qa_status.set_text("I didn't catch that, retry")
+            _cleanup_wav()
+            qa_status.set_text("Didn't catch that, retry")
             qa_status.set_text_color(C_RED)
             led_set(LED_RED)
             time.sleep(2)
+            qa_status.set_text('Ready !')
+            qa_status.set_text_color(C_GREEN)
             led_set(LED_CYAN, 15)
 
     except Exception as e:
+        _cleanup_wav()
         qa_status.set_text('Err: {}'.format(str(e)[:20]))
         qa_status.set_text_color(C_RED)
         led_set(LED_RED)
         time.sleep(2)
+        qa_status.set_text('Ready !')
+        qa_status.set_text_color(C_GREEN)
         led_set(LED_CYAN, 15)
     finally:
         is_recording = False
         gc.collect()
+
 # ============================================================
 #  ALERT HELPERS
 # ============================================================
 def _check_humidity_alert(hum):
-    """Red alert if humidity below 40%."""
     if hum < 40:
         db_hum.set_text_color(C_RED)
         db_hum_alert.set_text('! LOW HUM')
-        led_set(LED_RED)  # ← rouge = alerte
+        led_set(LED_RED)
     else:
         db_hum.set_text_color(C_COOL)
         db_hum_alert.set_text('')
@@ -559,13 +657,15 @@ btnB.wasPressed(_btn_b)
 btnC.wasPressed(_btn_c)
 
 # ============================================================
-#  STARTUP  — LEDs bleues au démarrage
+#  STARTUP
 # ============================================================
-led_set(LED_BLUE)  # ← bleu = démarrage
+_cleanup_wav()      # Nettoie les vieux fichiers WAV au démarrage
+led_set(LED_BLUE)
 show_wifi_page()
+# Note: MIC.begin() est appelé dans _ask_question() uniquement
 
 if wlan.isconnected():
-    led_set(LED_ORANGE)  # ← orange = reconnexion
+    led_set(LED_ORANGE)
     wf_status.set_text('Already connected')
     try:
         r = urequests.get('http://api.ipify.org/?format=text')
@@ -582,7 +682,7 @@ if wlan.isconnected():
 #  MAIN LOOP
 # ============================================================
 data_last_sent       = time.time() - 250
-weather_last_checked = time.time() - 115
+weather_last_checked = time.time() - 30
 time_last_updated    = time.time() - 55
 
 while True:
@@ -595,32 +695,28 @@ while True:
             db_temp.set_text('{:.1f}'.format(temp))
             db_hum.set_text('{:.0f}%'.format(hum))
 
-            # ── Humidity alert ───────────────────────────────
             _check_humidity_alert(hum)
 
-            # ── CO2 alert ────────────────────────────────────
             co2_color, co2_tag = co2_style(co2)
             db_co2.set_text('{}ppm'.format(co2))
             db_co2.set_text_color(co2_color)
             db_co2_tag.set_text(co2_tag)
             db_co2_tag.set_text_color(co2_color)
             if co2 >= 2000:
-                led_set(LED_RED)  # ← rouge = air dangereux
+                led_set(LED_RED)
 
-            # ── Clock ────────────────────────────────────────
             now = time.time()
             if now - time_last_updated >= 60:
                 db_time.set_text(fmt_time())
                 time_last_updated = now
 
-            # ── Network tasks ────────────────────────────────
             if wlan.isconnected():
                 if pir.state == 1:
                     _play_weather_tts()
                 if now - data_last_sent >= 300:
                     _send_data(temp, hum, co2)
                     data_last_sent = now
-                if now - weather_last_checked >= 120:
+                if now - weather_last_checked >= 30:
                     _fetch_weather_img()
                     weather_last_checked = now
             else:
