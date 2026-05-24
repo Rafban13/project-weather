@@ -229,98 +229,215 @@ def _get_forecast_for_city(city_name: str) -> dict:
         return {}
 
 
+
 @app.route('/ask-question', methods=['POST'])
 def ask_question():
     """
-    Receive audio from M5Stack, transcribe with Speech-to-Text,
-    answer with Gemini (weather + BigQuery context), return audio WAV.
-    Supports questions about any city worldwide.
+    Recoit un WAV depuis le M5Stack, transcrit, detecte si une ville est mentionnee.
+    Renvoie JSON :
+      - Si ville detectee : {"type":"image", "transcription":"...", "city":"Tokyo"}
+        Le M5Stack appellera ensuite /get-weather-image-large?city=Tokyo
+      - Sinon : {"type":"text", "transcription":"...", "lines":[["Label","Value"],...]}
+        Le M5Stack affichera ces paires label/valeur en mode tabulaire
     """
     try:
         audio_bytes = request.data
         if not audio_bytes:
-            return jsonify({"error": "No audio data received"}), 400
-
+            return jsonify({"type":"text", "transcription":"",
+                            "lines":[["Error","No audio received"]]}), 200
+ 
         ip = request.args.get('ip', '8.8.8.8')
-
-        # 1. Transcribe audio → text
+ 
+        # 1. Speech-to-Text
         question = speech_to_text_client.transcribe_audio(audio_bytes)
         if not question:
-            # Return a "didn't understand" audio response
-            sorry = "Sorry, I didn't catch that. Could you please repeat your question?"
-            audio = text_to_speech_client.generate_speech(sorry)
-            temp_file = os.path.join(TMP_DIR, 'answer_output.wav')
-            with open(temp_file, 'wb') as f:
-                f.write(audio)
-            return send_file(temp_file, mimetype='audio/wav'), 200
-
-        # 2. Get local weather context
+            return jsonify({
+                "type":"text",
+                "transcription":"(could not understand)",
+                "lines":[["Status","Please retry"],
+                         ["Tip","Speak louder"]]
+            }), 200
+ 
+        # 2. Detecter si une ville est mentionnee dans la question
+        city_extract_prompt = (
+            'Extract the city name from this question if it mentions one. '
+            'Question: "{}". '
+            'Reply with ONLY the city name capitalized, or "none". '
+            'Examples: "weather in Tokyo" -> Tokyo, '
+            '"temperature outside" -> none, '
+            '"will it rain in Paris" -> Paris.'
+        ).format(question)
+ 
+        extracted_city = vertex_ai_client.get_weather_description(
+            city_extract_prompt,
+            "You extract city names. Reply with ONLY the city name or 'none'."
+        ).strip()
+ 
+        # 3a. Si ville detectee, on dit au M5Stack de demander l'image
+        if extracted_city and extracted_city.lower() != "none":
+            # Verifier que la ville existe vraiment dans OpenWeather
+            test_weather = _get_weather_for_city(extracted_city)
+            if test_weather and test_weather.get('main'):
+                return jsonify({
+                    "type":"image",
+                    "transcription": question,
+                    "city": extracted_city
+                }), 200
+            # Si l'API OpenWeather ne reconnait pas la ville, fallback texte
+            return jsonify({
+                "type":"text",
+                "transcription": question,
+                "lines":[["City", extracted_city[:18]],
+                         ["Status", "Not found"]]
+            }), 200
+ 
+        # 3b. Sinon, question generale : reponse texte structuree
         location_data = weather_client.fetch_location_data(ip)
         lat, lon = location_data['loc'].split(',')
         local_city = location_data.get('city', 'your location')
         current_weather = weather_client.fetch_weather_data(lat, lon, current_weather=True)
         forecast_data   = weather_client.fetch_weather_data(lat, lon, current_weather=False)
-        next_days = forecast_data['list'][:8]  # next 24h
-        latest_data = bq_client.get_latest_sensor_data()
+        next_days = forecast_data['list'][:8]
+        latest_indoor = bq_client.get_latest_sensor_data()
+ 
+        # Demande a Gemini une reponse structuree en paires label/valeur
+        # pour affichage tabulaire sur le M5Stack (320x240, max 6 lignes)
+        structured_prompt = (
+            'User question: "{}"\n'
+            'Local city: {}\n'
+            'Outdoor weather: {}\n'
+            'Next 24h forecast: {}\n'
+            'Indoor sensors: {}\n\n'
+            'Answer the question using the data above. '
+            'Reply ONLY with a JSON array of 3 to 6 [label, value] pairs. '
+            'Labels are short (max 12 chars), values are short (max 18 chars). '
+            'Example output: '
+            '[["Topic","Indoor temp"],["Now","22.3 C"],["Trend","Stable"]]. '
+            'No markdown, no comments, no code fences, just the JSON array.'
+        ).format(question, local_city, current_weather, next_days, latest_indoor)
+ 
+        SYSTEM_INSTRUCTION = (
+            "You return ONLY a JSON array of [label,value] pairs. "
+            "No prose, no markdown fences, just the raw JSON array."
+        )
+ 
+        raw_answer = vertex_ai_client.get_weather_description(
+            structured_prompt, SYSTEM_INSTRUCTION
+        )
+ 
+        # Nettoyer la reponse de Gemini (peut contenir des backticks ou du markdown)
+        cleaned = raw_answer.strip()
+        if cleaned.startswith('```'):
+            cleaned = cleaned.split('```')[1]
+            if cleaned.startswith('json'):
+                cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+ 
+        try:
+            import json as _json
+            lines = _json.loads(cleaned)
+            if not isinstance(lines, list):
+                raise ValueError("Not a list")
+            # Valider la forme [[str,str],...] et limiter la longueur
+            lines = [[str(p[0])[:14], str(p[1])[:18]]
+                     for p in lines if len(p) >= 2]
+            if not lines:
+                lines = [["Answer", "No data"]]
+        except Exception:
+            # Fallback : si Gemini n'a pas renvoye du JSON propre
+            lines = [["Answer", cleaned[:18] if cleaned else "No data"]]
+ 
+        return jsonify({
+            "type":"text",
+            "transcription": question,
+            "lines": lines[:6]
+        }), 200
+ 
+    except Exception as e:
+        return jsonify({
+            "type":"text",
+            "transcription":"(error)",
+            "lines":[["Error", str(e)[:18]]]
+        }), 200
 
-        # 3. Detect if question mentions another city
-        # Ask Gemini to extract city name from question
-        city_extract_prompt = f"""
-Extract the city name from this question if it mentions a specific city.
-Question: "{question}"
-Reply with ONLY the city name, or reply with "none" if no city is mentioned.
-Examples:
-- "What is the weather in Geneva?" → Geneva
-- "Will it rain in Tokyo tomorrow?" → Tokyo  
-- "What is the temperature outside?" → none
-- "Should I take an umbrella?" → none
-"""
-        extracted_city = vertex_ai_client.get_weather_description(
-            city_extract_prompt,
-            "You extract city names from questions. Reply with ONLY the city name or 'none'."
-        ).strip().lower()
 
-        # 4. If another city detected, fetch its weather
-        extra_city_context = ""
-        if extracted_city and extracted_city != "none" and extracted_city != local_city.lower():
-            city_weather = _get_weather_for_city(extracted_city)
-            city_forecast = _get_forecast_for_city(extracted_city)
-            if city_weather:
-                extra_city_context = f"\nWeather for {extracted_city}: {city_weather}"
-            if city_forecast:
-                extra_city_context += f"\nForecast for {extracted_city}: {city_forecast['list'][:8]}"
-
-        # 5. Build full context for Gemini
-        context = f"""
-Local city: {local_city}
-Current outdoor weather (local): {current_weather}
-Weather forecast next 24h (local): {next_days}
-Latest indoor sensor data: {latest_data}
-{extra_city_context}
-User question: {question}
-"""
-
-        SYSTEM_INSTRUCTION = """You are a smart home weather assistant.
-Answer the user's question based on the provided weather and sensor data.
-Be concise (max 80 words), friendly and helpful.
-If the user asks about a specific city, use the weather data provided for that city.
-No emojis, no special characters.
-Always respond in English, regardless of the language the user speaks."""
-
-        # 6. Generate answer with Gemini
-        answer = vertex_ai_client.get_weather_description(context, SYSTEM_INSTRUCTION)
-
-        # 7. Convert answer to speech
-        audio = text_to_speech_client.generate_speech(answer)
-
-        temp_file = os.path.join(TMP_DIR, 'answer_output.wav')
-        with open(temp_file, 'wb') as f:
-            f.write(audio)
-        return send_file(temp_file, mimetype='audio/wav')
-
+@app.route('/get-weather-image-large', methods=['GET'])
+def get_weather_image_large():
+    """
+    Genere un PNG 320x240 stylise pour la meteo d'une ville donnee.
+    Utilise par le M5Stack quand la question concerne une ville.
+    """
+    try:
+        city = request.args.get('city', 'Lausanne')
+        weather_data = _get_weather_for_city(city)
+ 
+        if not weather_data or not weather_data.get('main'):
+            # Image d'erreur si la ville n'est pas trouvee
+            img = Image.new('RGB', (320, 240), color=(10, 10, 15))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([(0, 0), (320, 3)], fill=(255, 23, 68))
+            draw.text((20, 100), "City not found:", fill=(255, 200, 200))
+            draw.text((20, 120), city[:20], fill=(255, 255, 255))
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            buf.seek(0)
+            return send_file(buf, mimetype='image/png')
+ 
+        temp  = weather_data["main"]["temp"]
+        feels = weather_data["main"]["feels_like"]
+        hum   = weather_data["main"]["humidity"]
+        press = weather_data["main"].get("pressure", 0)
+        desc  = weather_data["weather"][0]["description"].title()
+        wind  = weather_data.get("wind", {}).get("speed", 0)
+        name  = weather_data.get("name", city)
+ 
+        # Palette coherente avec le design du M5Stack (dark minimalist)
+        img  = Image.new('RGB', (320, 240), color=(10, 10, 15))
+        draw = ImageDraw.Draw(img)
+ 
+        # Bandeau accent en haut
+        draw.rectangle([(0, 0), (320, 3)], fill=(0, 229, 255))
+ 
+        # Ville en haut
+        draw.text((14, 12), name[:24], fill=(0, 229, 255))
+ 
+        # Temperature en gros
+        draw.text((14, 35), '{:.1f}'.format(temp), fill=(255, 171, 0))
+        draw.text((100, 50), 'C', fill=(255, 171, 0))
+ 
+        # "Feels like" sous la temp
+        draw.text((14, 78), 'Feels {:.0f}C'.format(feels), fill=(120, 120, 150))
+ 
+        # Description meteo
+        draw.text((14, 100), desc[:32], fill=(220, 220, 240))
+ 
+        # Separateur horizontal
+        draw.line([(14, 125), (306, 125)], fill=(60, 60, 80), width=1)
+ 
+        # Colonne gauche : humidite et vent
+        draw.text((14, 140), 'Humidity', fill=(100, 110, 130))
+        draw.text((14, 155), '{}%'.format(hum), fill=(68, 138, 255))
+        draw.text((14, 180), 'Wind', fill=(100, 110, 130))
+        draw.text((14, 195), '{:.1f} m/s'.format(wind), fill=(150, 150, 180))
+ 
+        # Colonne droite : pression et timestamp UTC
+        draw.text((170, 140), 'Pressure', fill=(100, 110, 130))
+        draw.text((170, 155), '{} hPa'.format(press), fill=(200, 200, 220))
+ 
+        now_utc = datetime.utcnow().strftime('%H:%M UTC')
+        draw.text((170, 180), 'Updated', fill=(100, 110, 130))
+        draw.text((170, 195), now_utc, fill=(150, 150, 180))
+ 
+        # Bandeau accent en bas
+        draw.rectangle([(0, 237), (320, 240)], fill=(0, 229, 255))
+ 
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        return send_file(buf, mimetype='image/png')
+ 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
