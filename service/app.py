@@ -474,6 +474,41 @@ def get_weather_image_large():
  
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+    @app.route('/ask-question-voice', methods=['POST'])
+def ask_question_voice():
+    """Recoit l'audio du M5Stack, STT -> Gemini -> TTS, et renvoie un WAV."""
+    try:
+        audio_bytes = request.data
+        ip = request.args.get('ip', '8.8.8.8')
+
+        # 1. Speech-to-Text (On écoute la question)
+        question = speech_to_text_client.transcribe_audio(audio_bytes)
+        if not question:
+            question = "Can you give me a random weather tip?" # Sécurité
+
+        # 2. Contexte Météo
+        location_data = weather_client.fetch_location_data(ip)
+        lat, lon = location_data['loc'].split(',')
+        current = weather_client.fetch_weather_data(lat, lon, current_weather=True)
+
+        # 3. Gemini (On génère la réponse texte)
+        context = f"City: {location_data.get('city')}. Weather: {current}. User asks: {question}"
+        sys_instruct = "You are a smart home weather assistant. Answer in 1 or 2 short, friendly sentences max. No special characters."
+        answer_text = vertex_ai_client.get_weather_description(context, sys_instruct)
+
+        # 4. Text-to-Speech (On transforme la réponse en voix)
+        audio_response = text_to_speech_client.generate_speech(answer_text)
+
+        # 5. On renvoie le fichier WAV
+        temp_file = os.path.join(TMP_DIR, 'answer_voice.wav')
+        with open(temp_file, 'wb') as f:
+            f.write(audio_response)
+            
+        return send_file(temp_file, mimetype='audio/wav')
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
