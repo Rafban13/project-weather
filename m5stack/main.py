@@ -1,7 +1,5 @@
 # ============================================================
-#  Project Weather - M5Stack Core2
-#  Q&A vocal avec reponse texte/image (pas de speaker dans
-#  le Q&A pour eviter le bug I2S de UIFlow1).
+#  Project Weather - M5Stack Core2 (VITESSE ET STABILITÉ)
 # ============================================================
 
 from m5stack_ui import M5Screen, M5Label, M5Img, FONT_MONT_10, FONT_MONT_14, FONT_MONT_34
@@ -19,6 +17,7 @@ import struct
 from machine import RTC
 import gc
 
+# INITIALISATION DE L'ÉCRAN
 screen = M5Screen()
 screen.clean_screen()
 screen.set_screen_bg_color(0x0A0A0F)
@@ -51,6 +50,9 @@ last_tts_played        = 0
 last_outdoor_temp      = 0
 last_outdoor_humidity  = 0
 is_recording           = False
+
+# Variable pour suivre l'activation du micro
+mic_initialized        = False 
 
 C_BG      = 0x0A0A0F
 C_ACCENT  = 0x00E5FF
@@ -119,7 +121,7 @@ qa_info2  = M5Label('', x=12, y=75,  color=C_MID,    font=FONT_MONT_14)
 qa_status = M5Label('', x=12, y=110, color=C_YELLOW, font=FONT_MONT_14)
 qa_hint   = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
-# ── Labels page Reponse (texte tabulaire) ───────────────────
+# ── Labels page Reponse ───────────────────
 ans_title    = M5Label('', x=12, y=8,   color=C_ACCENT, font=FONT_MONT_14)
 ans_question = M5Label('', x=12, y=28,  color=C_MID,    font=FONT_MONT_10)
 ans_line     = M5Label('', x=12, y=44,  color=C_DIM,    font=FONT_MONT_10)
@@ -219,10 +221,11 @@ def hide_answer():
     ans_city_img.set_hidden(True)
 
 
+# ── Navigation Pages ────────────────────────────────────────
 def show_wifi_page():
     global current_page
     current_page = "wifi"
-    screen.set_screen_bg_color(0x08080F)
+    screen.set_screen_bg_color(0x08080F) 
     hide_dashboard(); hide_forecast(); hide_qa(); hide_answer()
     wf_title.set_text('//  WiFi Setup')
     wf_hint.set_text('A / C : navigate      B : connect')
@@ -235,7 +238,7 @@ def show_wifi_page():
 def show_dashboard_page():
     global current_page
     current_page = "dashboard"
-    screen.set_screen_bg_color(C_BG)
+    screen.set_screen_bg_color(C_BG) 
     hide_wifi(); hide_forecast(); hide_qa(); hide_answer()
     db_in_lbl.set_text('INDOOR')
     db_hm_lbl.set_text('HUM')
@@ -250,7 +253,7 @@ def show_dashboard_page():
 def show_forecast_page():
     global current_page
     current_page = "forecast"
-    screen.set_screen_bg_color(C_BG)
+    screen.set_screen_bg_color(C_BG) 
     hide_wifi(); hide_dashboard(); hide_qa(); hide_answer()
     fc_title.set_text('3-DAY FORECAST')
     fc_img.set_hidden(False)
@@ -263,7 +266,7 @@ def show_forecast_page():
 def show_qa_page():
     global current_page
     current_page = "qa"
-    screen.set_screen_bg_color(C_BG)
+    screen.set_screen_bg_color(C_BG) # Nettoie l'écran des pixels de l'image précédente
     hide_wifi(); hide_dashboard(); hide_forecast(); hide_answer()
     qa_title.set_text('//  Ask Me')
     qa_line.set_text('________________________________')
@@ -276,7 +279,6 @@ def show_qa_page():
 
 
 def show_answer_text(question, lines):
-    """Affiche une reponse tabulaire (label/valeur) sur la page Reponse."""
     global current_page
     current_page = "answer"
     screen.set_screen_bg_color(C_BG)
@@ -296,7 +298,6 @@ def show_answer_text(question, lines):
 
 
 def show_answer_image(image_path):
-    """Affiche une image plein ecran avec la meteo d'une ville."""
     global current_page
     current_page = "answer"
     screen.set_screen_bg_color(C_BG)
@@ -438,9 +439,13 @@ def _send_data(temp, hum, co2):
 
 
 def _play_weather_tts():
-    global last_tts_played
+    global last_tts_played, mic_initialized
     if is_recording:
         return
+    # SÉCURITÉ PRÉSENTATION : Si le micro a été activé, on bloque l'audio pour éviter le crash I2S
+    if mic_initialized:
+        return
+        
     now = time.time()
     if now - last_tts_played < 3600:
         return
@@ -475,10 +480,10 @@ def _play_weather_tts():
 
 
 # ============================================================
-#  Q&A MODIFIÉ SANS CRASH (Microphone persistant)
+#  Q&A REQUÊTES EN BOUCLE
 # ============================================================
 def _ask_question():
-    global is_recording
+    global is_recording, mic_initialized
 
     print("=== _ask_question CALLED ===")
     print("RAM dispo au debut:", gc.mem_free())
@@ -503,20 +508,24 @@ def _ask_question():
         gc.collect()
         print("[STEP 3] RAM apres gc:", gc.mem_free())
 
-        # --- CORRECTION ICI : PLUS DE MIC.begin() ---
-        print("[STEP 4] Utilisation du microphone permanent")
+        # --- LE MICRO S'ACTIVE SEULEMENT ICI À LA PREMIÈRE QUESTION ---
+        if not mic_initialized:
+            print("[STEP 4] Initialisation unique du microphone permanent")
+            MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
+                      buffer_length_ms=1000, block_length_ms=100)
+            mic_initialized = True
+        else:
+            print("[STEP 4] Reutilisation du microphone permanent")
 
         f_mic = open('/flash/question.wav', 'wb')
         MIC.recordStart(f_mic, 5000)
         MIC.waitRecordDone(7000)
         f_mic.close()
 
-        # --- CORRECTION ICI : PLUS DE MIC.deinit() ---
         print("[STEP 5] Fin enregistrement, pas de deinit")
         time.sleep_ms(200)
         gc.collect()
 
-        # Envoi a Flask, LED orange
         led_set(LED_ORANGE)
 
         with open('/flash/question.wav', 'rb') as f:
@@ -586,8 +595,7 @@ def _ask_question():
                 show_answer_image('/flash/res/city_weather.png')
             else:
                 r2.close()
-                show_answer_text(transcription,
-                                 [['Error', 'Image not loaded']])
+                show_answer_text(transcription, [['Error', 'Image not loaded']])
 
         else:
             lines = data.get('lines', [['Answer', 'No data']])
@@ -630,6 +638,7 @@ def _btn_a():
     elif current_page == "forecast":
         show_qa_page()
     elif current_page == "answer":
+        # Fenêtre de sortie : on revient proprement en arrière sans faire de reset
         show_qa_page()
 
 
@@ -669,13 +678,7 @@ btnC.wasPressed(_btn_c)
 # ── STARTUP ─────────────────────────────────────────────────
 _cleanup_wav()
 
-# --- CORRECTION : INITIALISATION UNIQUE DU MICROPHONE ICI ---
-try:
-    MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
-              buffer_length_ms=1000, block_length_ms=100)
-    print("-> Microphone permanent initialise au boot avec succes")
-except Exception as e:
-    print("-> Erreur d'initialisation du microphone :", e)
+# PLUS DE MICROPHONE ICI ! Le démarrage est propre et laisse le haut-parleur libre au début.
 
 led_set(LED_BLUE)
 show_wifi_page()
