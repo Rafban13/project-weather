@@ -266,11 +266,15 @@ def ask_question():
  
         # 2. Detection ville mentionnee
         city_extract_prompt = (
-            'Extract the city name from this question if it mentions one. '
+            'Extract the city name from this question (in any language). '
             'Question: "{}". '
-            'Reply with ONLY the city name capitalized, or "none". '
-            'Examples: "weather in Tokyo" -> Tokyo, '
-            '"temperature outside" -> none.'
+            'Reply with ONLY the city name in English capitalized, or "none". '
+            'Examples: '
+            '"weather in Tokyo" -> Tokyo, '
+            '"quel temps a Paris" -> Paris, '
+            '"meteo a Berlin demain" -> Berlin, '
+            '"temperature outside" -> none, '
+            '"quelle humidite interieure" -> none.'
         ).format(question)
  
         extracted_city = vertex_ai_client.get_weather_description(
@@ -353,7 +357,8 @@ def ask_question():
         ).format(question, local_city, current_weather, next_days, latest_indoor)
  
         SYSTEM_INSTRUCTION = (
-            "You return ONLY a JSON array of [label,value] pairs. "
+            "You return ONLY a JSON array of [label,value] pairs in English. "
+            "Labels and values must be in English, regardless of the question language. "
             "No prose, no markdown fences, just the raw JSON array."
         )
  
@@ -474,7 +479,7 @@ def get_weather_image_large():
  
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
+    
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
