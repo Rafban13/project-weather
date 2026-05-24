@@ -443,8 +443,7 @@ def get_weather_image_large():
         draw.text((14, 12), name[:24], fill=(0, 229, 255))
  
         # Temperature en gros
-        draw.text((14, 35), '{:.1f}'.format(temp), fill=(255, 171, 0))
-        draw.text((100, 50), 'C', fill=(255, 171, 0))
+        draw.text((14, 35), '{:.1f}C'.format(temp), fill=(255, 171, 0))
  
         # "Feels like" sous la temp
         draw.text((14, 78), 'Feels {:.0f}C'.format(feels), fill=(120, 120, 150))

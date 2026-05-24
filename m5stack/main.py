@@ -120,7 +120,6 @@ qa_status = M5Label('', x=12, y=110, color=C_YELLOW, font=FONT_MONT_14)
 qa_hint   = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
 # ── Labels page Reponse (texte tabulaire) ───────────────────
-# 6 lignes maximum, chacune avec un label (gauche) et une valeur (droite)
 ans_title    = M5Label('', x=12, y=8,   color=C_ACCENT, font=FONT_MONT_14)
 ans_question = M5Label('', x=12, y=28,  color=C_MID,    font=FONT_MONT_10)
 ans_line     = M5Label('', x=12, y=44,  color=C_DIM,    font=FONT_MONT_10)
@@ -140,7 +139,6 @@ ans_hint  = M5Label('', x=6,   y=226, color=C_DIM,   font=FONT_MONT_10)
 ANS_LBL = [ans_lbl_0, ans_lbl_1, ans_lbl_2, ans_lbl_3, ans_lbl_4, ans_lbl_5]
 ANS_VAL = [ans_val_0, ans_val_1, ans_val_2, ans_val_3, ans_val_4, ans_val_5]
 
-# ── Image plein ecran pour la reponse meteo de ville ────────
 ans_city_img = M5Img("/flash/res/default_current_weather.png", x=0, y=0)
 
 
@@ -286,7 +284,6 @@ def show_answer_text(question, lines):
     ans_title.set_text('//  Answer')
     ans_question.set_text(question[:48])
     ans_line.set_text('________________________________')
-    # Remplir au maximum 6 lignes label/valeur
     for i in range(6):
         if i < len(lines):
             ANS_LBL[i].set_text(str(lines[i][0])[:14])
@@ -304,11 +301,9 @@ def show_answer_image(image_path):
     current_page = "answer"
     screen.set_screen_bg_color(C_BG)
     hide_wifi(); hide_dashboard(); hide_forecast(); hide_qa()
-    # On cache aussi les labels texte
     ans_title.set_text(''); ans_question.set_text(''); ans_line.set_text('')
     for lbl in ANS_LBL: lbl.set_text('')
     for val in ANS_VAL: val.set_text('')
-    # Image plein ecran
     ans_city_img.set_img_src(image_path)
     ans_city_img.set_hidden(False)
     ans_hint.set_text('B: new question   A: back')
@@ -443,9 +438,6 @@ def _send_data(temp, hum, co2):
 
 
 def _play_weather_tts():
-    """Annonce vocale via PIR. Le speaker peut etre utilise ici car on
-    n'a pas active MIC.deinit avant. C'est le seul endroit ou le speaker
-    est appele apres le boot."""
     global last_tts_played
     if is_recording:
         return
@@ -483,13 +475,13 @@ def _play_weather_tts():
 
 
 # ============================================================
-#  Q&A : enregistre une question, recoit une reponse JSON
-#  (texte tabulaire) ou une image (meteo de ville). PAS DE
-#  speaker.playWAV ici, pour eviter le bug I2S de UIFlow1
-#  qui crash au prochain MIC.begin.
+#  Q&A MODIFIÉ SANS CRASH (Microphone persistant)
 # ============================================================
 def _ask_question():
     global is_recording
+
+    print("=== _ask_question CALLED ===")
+    print("RAM dispo au debut:", gc.mem_free())
 
     if not wlan.isconnected():
         led_set(LED_RED)
@@ -501,24 +493,27 @@ def _ask_question():
         is_recording = True
 
         # Countdown 2s, LED orange
+        print("[STEP 1] Countdown")
         led_set(LED_ORANGE)
         time.sleep(2)
 
         # Enregistrement 5s, LED violette
+        print("[STEP 2] LED purple, gc.collect")
         led_set(LED_PURPLE)
         gc.collect()
+        print("[STEP 3] RAM apres gc:", gc.mem_free())
 
-        MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
-                  buffer_length_ms=1000, block_length_ms=100)
+        # --- CORRECTION ICI : PLUS DE MIC.begin() ---
+        print("[STEP 4] Utilisation du microphone permanent")
 
         f_mic = open('/flash/question.wav', 'wb')
         MIC.recordStart(f_mic, 5000)
         MIC.waitRecordDone(7000)
         f_mic.close()
 
-        # MIC.deinit obligatoire avec argument sous UIFlow1
-        MIC.deinit(2000)
-        time.sleep_ms(500)
+        # --- CORRECTION ICI : PLUS DE MIC.deinit() ---
+        print("[STEP 5] Fin enregistrement, pas de deinit")
+        time.sleep_ms(200)
         gc.collect()
 
         # Envoi a Flask, LED orange
@@ -528,7 +523,6 @@ def _ask_question():
             wav_data = f.read()
         print("Question size:", len(wav_data), "bytes")
 
-        # Appel /ask-question qui renvoie du JSON (image ou tableau)
         r = urequests.post(
             FLASK_URL + '/ask-question?ip=' + (device_public_ip or '8.8.8.8'),
             data=wav_data,
@@ -549,7 +543,6 @@ def _ask_question():
             led_set(LED_CYAN, 15)
             return
 
-        # Parsing du JSON de reponse
         response_text = r.text
         r.close()
         del r
@@ -569,20 +562,27 @@ def _ask_question():
         transcription = data.get('transcription', '(empty)')
 
         if response_type == 'image':
-            # Reponse meteo d'une ville : on telecharge l'image
             city = data.get('city', 'Unknown')
             print("Fetching image for city:", city)
             led_set(LED_WHITE)
+
+            gc.collect()
+            print("RAM avant download:", gc.mem_free())
 
             r2 = urequests.get(
                 FLASK_URL + '/get-weather-image-large?city=' + city
             )
             if r2.status_code == 200:
                 with open('/flash/res/city_weather.png', 'wb') as f:
-                    f.write(r2.content)
+                    while True:
+                        chunk = r2.raw.read(1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
                 r2.close()
                 del r2
                 gc.collect()
+                print("Image telechargee, RAM apres:", gc.mem_free())
                 show_answer_image('/flash/res/city_weather.png')
             else:
                 r2.close()
@@ -590,7 +590,6 @@ def _ask_question():
                                  [['Error', 'Image not loaded']])
 
         else:
-            # Reponse texte tabulaire : on affiche les paires label/valeur
             lines = data.get('lines', [['Answer', 'No data']])
             print("Showing", len(lines), "text lines")
             show_answer_text(transcription, lines)
@@ -631,7 +630,6 @@ def _btn_a():
     elif current_page == "forecast":
         show_qa_page()
     elif current_page == "answer":
-        # Bouton A sur la page de reponse : retour Q&A
         show_qa_page()
 
 
@@ -645,7 +643,6 @@ def _btn_b():
     elif current_page == "forecast":
         show_wifi_page()
     elif current_page == "answer":
-        # Bouton B sur la page de reponse : nouvelle question
         show_qa_page()
         time.sleep_ms(200)
         _ask_question()
@@ -671,6 +668,15 @@ btnC.wasPressed(_btn_c)
 
 # ── STARTUP ─────────────────────────────────────────────────
 _cleanup_wav()
+
+# --- CORRECTION : INITIALISATION UNIQUE DU MICROPHONE ICI ---
+try:
+    MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
+              buffer_length_ms=1000, block_length_ms=100)
+    print("-> Microphone permanent initialise au boot avec succes")
+except Exception as e:
+    print("-> Erreur d'initialisation du microphone :", e)
+
 led_set(LED_BLUE)
 show_wifi_page()
 
