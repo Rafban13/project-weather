@@ -1,8 +1,7 @@
 # ============================================================
-#  Project Weather — M5Stack Core2
-#  Dark Minimalist UI — Final
-#  Features: WiFi, Dashboard, Forecast, PIR TTS, Q&A,
-#            Alerts, RGB LEDs, Speech-to-Text
+#  Project Weather - M5Stack Core2
+#  Q&A vocal avec reponse texte/image (pas de speaker dans
+#  le Q&A pour eviter le bug I2S de UIFlow1).
 # ============================================================
 
 from m5stack_ui import M5Screen, M5Label, M5Img, FONT_MONT_10, FONT_MONT_14, FONT_MONT_34
@@ -11,6 +10,7 @@ from m5stack import rgb
 import unit
 import MicrophonePDM as MIC
 import uos
+import ujson
 from network import WLAN, STA_IF
 import urequests
 import utime as time
@@ -19,17 +19,14 @@ import struct
 from machine import RTC
 import gc
 
-# ── Screen ──────────────────────────────────────────────────
 screen = M5Screen()
 screen.clean_screen()
 screen.set_screen_bg_color(0x0A0A0F)
 
-# ── Sensors ─────────────────────────────────────────────────
 env3 = unit.get(unit.ENV3, unit.PORTA)
 pir  = unit.get(unit.PIR,  unit.PORTB)
 tvoc = unit.get(unit.TVOC, unit.PORTC)
 
-# ── Config ──────────────────────────────────────────────────
 FLASK_URL       = "https://weather-service-197991375095.europe-west6.run.app"
 DEVICE_ID       = "m5stack-Tesla"
 NTP_DELTA       = 3155673600
@@ -47,7 +44,6 @@ wlan = WLAN(STA_IF)
 wlan.active(True)
 time.sleep(1)
 
-# ── State ────────────────────────────────────────────────────
 device_public_ip       = None
 current_page           = "wifi"
 selected_network_index = 0
@@ -56,7 +52,6 @@ last_outdoor_temp      = 0
 last_outdoor_humidity  = 0
 is_recording           = False
 
-# ── Colours (screen) ─────────────────────────────────────────
 C_BG      = 0x0A0A0F
 C_ACCENT  = 0x00E5FF
 C_WARM    = 0xFFAB00
@@ -68,7 +63,6 @@ C_DIM     = 0x333344
 C_MID     = 0x7777AA
 C_WHITE   = 0xDDDDFF
 
-# ── LED colours ───────────────────────────────────────────────
 LED_BLUE   = 0x0000FF
 LED_ORANGE = 0xFF6600
 LED_GREEN  = 0x00FF00
@@ -78,17 +72,17 @@ LED_WHITE  = 0xFFFFFF
 LED_CYAN   = 0x00FFFF
 LED_OFF    = 0x000000
 
-# ── LED helpers ───────────────────────────────────────────────
+
 def led_set(color, brightness=30):
     rgb.setColorAll(color)
     rgb.setBrightness(brightness)
 
+
 def led_off():
     rgb.setColorAll(LED_OFF)
 
-# ============================================================
-#  WIFI PAGE
-# ============================================================
+
+# ── Labels page WiFi ────────────────────────────────────────
 wf_title  = M5Label('', x=65,  y=8,   color=C_ACCENT, font=FONT_MONT_14)
 wf_hint   = M5Label('', x=12,  y=28,  color=C_MID,    font=FONT_MONT_10)
 wf_line   = M5Label('', x=12,  y=44,  color=C_DIM,    font=FONT_MONT_10)
@@ -97,9 +91,7 @@ wf_net1   = M5Label('', x=12,  y=86,  color=C_WHITE,  font=FONT_MONT_14)
 wf_net2   = M5Label('', x=12,  y=110, color=C_WHITE,  font=FONT_MONT_14)
 wf_status = M5Label('', x=12,  y=150, color=C_YELLOW, font=FONT_MONT_10)
 
-# ============================================================
-#  DASHBOARD PAGE
-# ============================================================
+# ── Labels page Dashboard ───────────────────────────────────
 db_time      = M5Label('', x=6,   y=3,   color=C_MID,   font=FONT_MONT_10)
 db_status    = M5Label('', x=228, y=3,   color=C_GREEN, font=FONT_MONT_10)
 db_in_lbl    = M5Label('', x=6,   y=20,  color=C_MID,   font=FONT_MONT_10)
@@ -114,16 +106,12 @@ db_div       = M5Label('', x=6,   y=120, color=C_DIM,   font=FONT_MONT_10)
 db_wimg      = M5Img("/flash/res/default_current_weather.png", x=0, y=128)
 db_hint      = M5Label('', x=6,   y=226, color=C_DIM,   font=FONT_MONT_10)
 
-# ============================================================
-#  FORECAST PAGE
-# ============================================================
+# ── Labels page Forecast ────────────────────────────────────
 fc_title = M5Label('', x=85, y=3,   color=C_ACCENT, font=FONT_MONT_14)
 fc_img   = M5Img("/flash/res/default_future_weather.png", x=0, y=22)
 fc_hint  = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
-# ============================================================
-#  Q&A PAGE
-# ============================================================
+# ── Labels page Q&A ─────────────────────────────────────────
 qa_title  = M5Label('', x=85, y=8,   color=C_ACCENT, font=FONT_MONT_14)
 qa_line   = M5Label('', x=12, y=28,  color=C_DIM,    font=FONT_MONT_10)
 qa_info   = M5Label('', x=12, y=50,  color=C_WHITE,  font=FONT_MONT_14)
@@ -131,14 +119,37 @@ qa_info2  = M5Label('', x=12, y=75,  color=C_MID,    font=FONT_MONT_14)
 qa_status = M5Label('', x=12, y=110, color=C_YELLOW, font=FONT_MONT_14)
 qa_hint   = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
-# ============================================================
-#  HELPERS
-# ============================================================
+# ── Labels page Reponse (texte tabulaire) ───────────────────
+# 6 lignes maximum, chacune avec un label (gauche) et une valeur (droite)
+ans_title    = M5Label('', x=12, y=8,   color=C_ACCENT, font=FONT_MONT_14)
+ans_question = M5Label('', x=12, y=28,  color=C_MID,    font=FONT_MONT_10)
+ans_line     = M5Label('', x=12, y=44,  color=C_DIM,    font=FONT_MONT_10)
+ans_lbl_0 = M5Label('', x=12,  y=60,  color=C_MID,   font=FONT_MONT_14)
+ans_val_0 = M5Label('', x=160, y=60,  color=C_WARM,  font=FONT_MONT_14)
+ans_lbl_1 = M5Label('', x=12,  y=84,  color=C_MID,   font=FONT_MONT_14)
+ans_val_1 = M5Label('', x=160, y=84,  color=C_WARM,  font=FONT_MONT_14)
+ans_lbl_2 = M5Label('', x=12,  y=108, color=C_MID,   font=FONT_MONT_14)
+ans_val_2 = M5Label('', x=160, y=108, color=C_WARM,  font=FONT_MONT_14)
+ans_lbl_3 = M5Label('', x=12,  y=132, color=C_MID,   font=FONT_MONT_14)
+ans_val_3 = M5Label('', x=160, y=132, color=C_WARM,  font=FONT_MONT_14)
+ans_lbl_4 = M5Label('', x=12,  y=156, color=C_MID,   font=FONT_MONT_14)
+ans_val_4 = M5Label('', x=160, y=156, color=C_WARM,  font=FONT_MONT_14)
+ans_lbl_5 = M5Label('', x=12,  y=180, color=C_MID,   font=FONT_MONT_14)
+ans_val_5 = M5Label('', x=160, y=180, color=C_WARM,  font=FONT_MONT_14)
+ans_hint  = M5Label('', x=6,   y=226, color=C_DIM,   font=FONT_MONT_10)
+ANS_LBL = [ans_lbl_0, ans_lbl_1, ans_lbl_2, ans_lbl_3, ans_lbl_4, ans_lbl_5]
+ANS_VAL = [ans_val_0, ans_val_1, ans_val_2, ans_val_3, ans_val_4, ans_val_5]
+
+# ── Image plein ecran pour la reponse meteo de ville ────────
+ans_city_img = M5Img("/flash/res/default_current_weather.png", x=0, y=0)
+
+
 def co2_style(co2):
     if co2 < 600:    return C_GREEN,  'EXCELLENT'
     elif co2 < 1000: return C_YELLOW, 'GOOD'
     elif co2 < 2000: return C_WARM,   'POOR'
     else:            return C_RED,    'DANGER'
+
 
 def sync_ntp():
     try:
@@ -155,6 +166,7 @@ def sync_ntp():
     except:
         return False
 
+
 def fmt_time():
     try:
         t = time.localtime()
@@ -164,19 +176,21 @@ def fmt_time():
     except:
         return ''
 
+
 def _cleanup_wav():
-    """Supprime les fichiers WAV pour libérer la flash."""
     for f in ['/flash/question.wav', '/flash/answer.wav', '/flash/weather.wav']:
         try:
             uos.remove(f)
         except:
             pass
 
-# ── Hide helpers ─────────────────────────────────────────────
+
+# ── Hide helpers ────────────────────────────────────────────
 def hide_wifi():
     wf_title.set_text(''); wf_hint.set_text(''); wf_line.set_text('')
     wf_net0.set_text(''); wf_net1.set_text(''); wf_net2.set_text('')
     wf_status.set_text('')
+
 
 def hide_dashboard():
     db_time.set_text('');   db_status.set_text('')
@@ -187,23 +201,31 @@ def hide_dashboard():
     db_div.set_text('');    db_hint.set_text('')
     db_wimg.set_hidden(True)
 
+
 def hide_forecast():
     fc_title.set_text(''); fc_hint.set_text('')
     fc_img.set_hidden(True)
+
 
 def hide_qa():
     qa_title.set_text(''); qa_line.set_text('')
     qa_info.set_text('');  qa_info2.set_text('')
     qa_status.set_text(''); qa_hint.set_text('')
 
-# ============================================================
-#  PAGE RENDERERS
-# ============================================================
+
+def hide_answer():
+    ans_title.set_text(''); ans_question.set_text(''); ans_line.set_text('')
+    for lbl in ANS_LBL: lbl.set_text('')
+    for val in ANS_VAL: val.set_text('')
+    ans_hint.set_text('')
+    ans_city_img.set_hidden(True)
+
+
 def show_wifi_page():
     global current_page
     current_page = "wifi"
     screen.set_screen_bg_color(0x08080F)
-    hide_dashboard(); hide_forecast(); hide_qa()
+    hide_dashboard(); hide_forecast(); hide_qa(); hide_answer()
     wf_title.set_text('//  WiFi Setup')
     wf_hint.set_text('A / C : navigate      B : connect')
     wf_line.set_text('________________________________')
@@ -211,11 +233,12 @@ def show_wifi_page():
     led_set(LED_BLUE)
     _render_networks()
 
+
 def show_dashboard_page():
     global current_page
     current_page = "dashboard"
     screen.set_screen_bg_color(C_BG)
-    hide_wifi(); hide_forecast(); hide_qa()
+    hide_wifi(); hide_forecast(); hide_qa(); hide_answer()
     db_in_lbl.set_text('INDOOR')
     db_hm_lbl.set_text('HUM')
     db_co2_lbl.set_text('CO2')
@@ -225,11 +248,12 @@ def show_dashboard_page():
     db_time.set_text(fmt_time())
     led_set(LED_CYAN, 15)
 
+
 def show_forecast_page():
     global current_page
     current_page = "forecast"
     screen.set_screen_bg_color(C_BG)
-    hide_wifi(); hide_dashboard(); hide_qa()
+    hide_wifi(); hide_dashboard(); hide_qa(); hide_answer()
     fc_title.set_text('3-DAY FORECAST')
     fc_img.set_hidden(False)
     fc_hint.set_text('< Q&A             WiFi >')
@@ -237,11 +261,12 @@ def show_forecast_page():
     if wlan.isconnected():
         _fetch_forecast_img()
 
+
 def show_qa_page():
     global current_page
     current_page = "qa"
     screen.set_screen_bg_color(C_BG)
-    hide_wifi(); hide_dashboard(); hide_forecast()
+    hide_wifi(); hide_dashboard(); hide_forecast(); hide_answer()
     qa_title.set_text('//  Ask Me')
     qa_line.set_text('________________________________')
     qa_info.set_text('Press B to record')
@@ -250,6 +275,45 @@ def show_qa_page():
     qa_status.set_text_color(C_GREEN)
     qa_hint.set_text('< Dashboard       Forecast >')
     led_set(LED_CYAN, 15)
+
+
+def show_answer_text(question, lines):
+    """Affiche une reponse tabulaire (label/valeur) sur la page Reponse."""
+    global current_page
+    current_page = "answer"
+    screen.set_screen_bg_color(C_BG)
+    hide_wifi(); hide_dashboard(); hide_forecast(); hide_qa()
+    ans_title.set_text('//  Answer')
+    ans_question.set_text(question[:48])
+    ans_line.set_text('________________________________')
+    # Remplir au maximum 6 lignes label/valeur
+    for i in range(6):
+        if i < len(lines):
+            ANS_LBL[i].set_text(str(lines[i][0])[:14])
+            ANS_VAL[i].set_text(str(lines[i][1])[:18])
+        else:
+            ANS_LBL[i].set_text('')
+            ANS_VAL[i].set_text('')
+    ans_hint.set_text('B: new question   A: back')
+    led_set(LED_CYAN, 15)
+
+
+def show_answer_image(image_path):
+    """Affiche une image plein ecran avec la meteo d'une ville."""
+    global current_page
+    current_page = "answer"
+    screen.set_screen_bg_color(C_BG)
+    hide_wifi(); hide_dashboard(); hide_forecast(); hide_qa()
+    # On cache aussi les labels texte
+    ans_title.set_text(''); ans_question.set_text(''); ans_line.set_text('')
+    for lbl in ANS_LBL: lbl.set_text('')
+    for val in ANS_VAL: val.set_text('')
+    # Image plein ecran
+    ans_city_img.set_img_src(image_path)
+    ans_city_img.set_hidden(False)
+    ans_hint.set_text('B: new question   A: back')
+    led_set(LED_CYAN, 15)
+
 
 def _render_networks():
     labels = [wf_net0, wf_net1, wf_net2]
@@ -265,9 +329,7 @@ def _render_networks():
         else:
             lbl.set_text('')
 
-# ============================================================
-#  NETWORK CONNECTION
-# ============================================================
+
 def connect_selected():
     global device_public_ip
     ssid     = NETWORK_NAMES[selected_network_index]
@@ -295,11 +357,9 @@ def connect_selected():
         _fetch_weather_img()
     else:
         led_set(LED_RED)
-        wf_status.set_text('Failed — try again')
+        wf_status.set_text('Failed - try again')
 
-# ============================================================
-#  BIGQUERY STARTUP SYNC
-# ============================================================
+
 def _sync_from_bigquery():
     global last_outdoor_temp, last_outdoor_humidity
     try:
@@ -313,9 +373,7 @@ def _sync_from_bigquery():
     except:
         pass
 
-# ============================================================
-#  DATA FETCH
-# ============================================================
+
 def _fetch_weather_img():
     try:
         led_set(LED_ORANGE, 10)
@@ -332,6 +390,7 @@ def _fetch_weather_img():
     except:
         led_set(LED_CYAN, 15)
 
+
 def _fetch_forecast_img():
     try:
         led_set(LED_ORANGE, 10)
@@ -347,6 +406,7 @@ def _fetch_forecast_img():
         led_set(LED_CYAN, 15)
     except:
         led_set(LED_CYAN, 15)
+
 
 def _send_data(temp, hum, co2):
     try:
@@ -381,12 +441,13 @@ def _send_data(temp, hum, co2):
         time.sleep(2)
         led_set(LED_CYAN, 15)
 
-# ============================================================
-#  PIR — WEATHER ANNOUNCEMENT  (max once per hour)
-# ============================================================
+
 def _play_weather_tts():
+    """Annonce vocale via PIR. Le speaker peut etre utilise ici car on
+    n'a pas active MIC.deinit avant. C'est le seul endroit ou le speaker
+    est appele apres le boot."""
     global last_tts_played
-    if is_recording:    # ← ne pas interrompre un enregistrement
+    if is_recording:
         return
     now = time.time()
     if now - last_tts_played < 3600:
@@ -420,16 +481,16 @@ def _play_weather_tts():
         time.sleep(2)
         led_set(LED_CYAN, 15)
 
+
 # ============================================================
-#  Q&A — RECORD + ASK
-#  Pattern: un seul cycle begin -> record -> deinit -> send -> play
-#  par appui sur B. Feedback visuel via LED uniquement (UIFlow1
-#  ne rafraichit pas l'ecran depuis un callback de bouton).
+#  Q&A : enregistre une question, recoit une reponse JSON
+#  (texte tabulaire) ou une image (meteo de ville). PAS DE
+#  speaker.playWAV ici, pour eviter le bug I2S de UIFlow1
+#  qui crash au prochain MIC.begin.
 # ============================================================
 def _ask_question():
     global is_recording
 
-    # Garde-fou : pas de question sans WiFi (sinon urequests va planter)
     if not wlan.isconnected():
         led_set(LED_RED)
         time.sleep(2)
@@ -437,62 +498,37 @@ def _ask_question():
         return
 
     try:
-        # Flag global pour empecher le PIR TTS de se declencher pendant qu'on
-        # enregistre (sinon conflit speaker/mic sur le bus I2S)
         is_recording = True
 
-        # ── Countdown : laisse 2 sec a l'utilisateur pour se preparer ──
-        # LED orange = preparation
+        # Countdown 2s, LED orange
         led_set(LED_ORANGE)
         time.sleep(2)
 
-        # ── Enregistrement (LED violette = recording) ───────────────
+        # Enregistrement 5s, LED violette
         led_set(LED_PURPLE)
-
-        # gc.collect() avant d'allouer le buffer du micro : on maximise
-        # la RAM libre pour eviter une fragmentation du heap
         gc.collect()
 
-        # Init du micro PDM (pin 0 = WS, pin 34 = data sur Core2)
         MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
                   buffer_length_ms=1000, block_length_ms=100)
 
-        # 5000 ms = 5 secondes de capture, assez pour une phrase complete
         f_mic = open('/flash/question.wav', 'wb')
         MIC.recordStart(f_mic, 5000)
-
-        # Bloque jusqu'a ce que recordStart ait fini d'ecrire (timeout 7s)
         MIC.waitRecordDone(7000)
-        print("1 - Enregistrement OK")
-
-        # Fermer le fichier AVANT de deinit le micro :
-        # si on deinit avant close, la tache de fond du driver PDM
-        # peut encore essayer d'ecrire dans un fichier ferme -> crash
         f_mic.close()
-        print("2 - Fichier ferme OK")
 
-        # deinit(timeout_ms) : attend que la tache de fond du driver PDM
-        # termine ses dernieres ecritures avant de liberer le bus I2S.
-        # L'argument est obligatoire dans cette version d'UIFlow1.
+        # MIC.deinit obligatoire avec argument sous UIFlow1
         MIC.deinit(2000)
-        print("3 - Micro eteint OK")
-
-        # Pause pour laisser le bus I2S se liberer cote hardware
-        # avant que le speaker essaie de l'utiliser
         time.sleep_ms(500)
         gc.collect()
-        print("4 - Memoire nettoyee OK")
 
-        # ── Envoi au cloud (LED orange = processing) ────────────────
+        # Envoi a Flask, LED orange
         led_set(LED_ORANGE)
 
-        # Lecture du WAV en RAM pour l'envoyer
         with open('/flash/question.wav', 'rb') as f:
             wav_data = f.read()
-        print("5 - Taille de la question :", len(wav_data), "octets")
+        print("Question size:", len(wav_data), "bytes")
 
-        # POST a Flask : audio brut en body, IP en query string
-        # pour que le backend puisse geolocaliser et chercher la meteo locale
+        # Appel /ask-question qui renvoie du JSON (image ou tableau)
         r = urequests.post(
             FLASK_URL + '/ask-question?ip=' + (device_public_ip or '8.8.8.8'),
             data=wav_data,
@@ -501,78 +537,77 @@ def _ask_question():
                 'Content-Length': str(len(wav_data))
             }
         )
-
-        # Libere la RAM du buffer wav_data tout de suite
         del wav_data
         gc.collect()
 
-        if r.status_code == 200:
-            print("6 - Reponse recue ! Taille :", len(r.content), "octets")
-
-            # Sauvegarde la reponse audio sur la flash
-            with open('/flash/answer.wav', 'wb') as f:
-                f.write(r.content)
-            r.close()
-            del r
-            gc.collect()
-            print("7 - Fichier reponse sauvegarde")
-
-            # ── Lecture de la reponse (LED blanche = playing) ────
-            led_set(LED_WHITE)
-
-            print("8 - Lancement haut-parleur...")
-            speaker.playWAV('/flash/answer.wav', volume=6)
-            print("9 - Lecture terminee !")
-
-            # Tentative de liberation du bus I2S cote speaker
-            # pour eviter le conflit avec MIC.begin() au prochain appui sur B
-            try:
-                speaker.deinit()
-                print("10 - Speaker deinit OK")
-            except Exception as e:
-                print("10 - Speaker deinit non supporte:", str(e))
-
-            # Pause pour laisser le bus I2S se liberer cote hardware
-            time.sleep_ms(500)
-
-            # Nettoyage des WAV pour ne pas saturer la flash
-            _cleanup_wav()
-            gc.collect()
-
-            # Retour a l'etat "Ready" (LED cyan)
-            led_set(LED_CYAN, 15)
-
-        else:
-            # Erreur cote serveur : on log, on previent l'utilisateur
-            print("ERREUR SERVEUR :", r.status_code)
-            try:
-                print("REPONSE BRUTE :", r.text[:300])
-            except:
-                print("REPONSE BRUTE : (illisible)")
+        if r.status_code != 200:
+            print("Server error:", r.status_code)
             r.close()
             _cleanup_wav()
             led_set(LED_RED)
             time.sleep(2)
             led_set(LED_CYAN, 15)
+            return
+
+        # Parsing du JSON de reponse
+        response_text = r.text
+        r.close()
+        del r
+        gc.collect()
+        print("Response received:", response_text[:200])
+
+        try:
+            data = ujson.loads(response_text)
+        except Exception as e:
+            print("JSON parse error:", str(e))
+            led_set(LED_RED)
+            time.sleep(2)
+            led_set(LED_CYAN, 15)
+            return
+
+        response_type = data.get('type', 'text')
+        transcription = data.get('transcription', '(empty)')
+
+        if response_type == 'image':
+            # Reponse meteo d'une ville : on telecharge l'image
+            city = data.get('city', 'Unknown')
+            print("Fetching image for city:", city)
+            led_set(LED_WHITE)
+
+            r2 = urequests.get(
+                FLASK_URL + '/get-weather-image-large?city=' + city
+            )
+            if r2.status_code == 200:
+                with open('/flash/res/city_weather.png', 'wb') as f:
+                    f.write(r2.content)
+                r2.close()
+                del r2
+                gc.collect()
+                show_answer_image('/flash/res/city_weather.png')
+            else:
+                r2.close()
+                show_answer_text(transcription,
+                                 [['Error', 'Image not loaded']])
+
+        else:
+            # Reponse texte tabulaire : on affiche les paires label/valeur
+            lines = data.get('lines', [['Answer', 'No data']])
+            print("Showing", len(lines), "text lines")
+            show_answer_text(transcription, lines)
+
+        _cleanup_wav()
 
     except Exception as e:
-        # Filet de securite global : si n'importe quoi crashe,
-        # on log l'erreur et on remet la LED en cyan
-        print("EXCEPTION CAUGHT:", str(e))
-        print("EXCEPTION TYPE:", type(e).__name__)
+        print("EXCEPTION:", type(e).__name__, str(e))
         _cleanup_wav()
         led_set(LED_RED)
         time.sleep(2)
         led_set(LED_CYAN, 15)
     finally:
-        # Toujours liberer le flag d'enregistrement, meme en cas d'erreur,
-        # sinon le PIR TTS reste bloque pour toujours
         is_recording = False
         gc.collect()
 
-# ============================================================
-#  ALERT HELPERS
-# ============================================================
+
 def _check_humidity_alert(hum):
     if hum < 40:
         db_hum.set_text_color(C_RED)
@@ -582,9 +617,8 @@ def _check_humidity_alert(hum):
         db_hum.set_text_color(C_COOL)
         db_hum_alert.set_text('')
 
-# ============================================================
-#  BUTTON CALLBACKS
-# ============================================================
+
+# ── Callbacks boutons ───────────────────────────────────────
 def _btn_a():
     global selected_network_index
     if current_page == "wifi":
@@ -596,6 +630,10 @@ def _btn_a():
         show_dashboard_page()
     elif current_page == "forecast":
         show_qa_page()
+    elif current_page == "answer":
+        # Bouton A sur la page de reponse : retour Q&A
+        show_qa_page()
+
 
 def _btn_b():
     if current_page == "wifi":
@@ -606,6 +644,12 @@ def _btn_b():
         _ask_question()
     elif current_page == "forecast":
         show_wifi_page()
+    elif current_page == "answer":
+        # Bouton B sur la page de reponse : nouvelle question
+        show_qa_page()
+        time.sleep_ms(200)
+        _ask_question()
+
 
 def _btn_c():
     global selected_network_index
@@ -616,15 +660,17 @@ def _btn_c():
         show_forecast_page()
     elif current_page == "qa":
         show_forecast_page()
+    elif current_page == "answer":
+        show_qa_page()
+
 
 btnA.wasPressed(_btn_a)
 btnB.wasPressed(_btn_b)
 btnC.wasPressed(_btn_c)
 
-# ============================================================
-#  STARTUP
-# ============================================================
-_cleanup_wav()      # Nettoie les vieux fichiers WAV au démarrage
+
+# ── STARTUP ─────────────────────────────────────────────────
+_cleanup_wav()
 led_set(LED_BLUE)
 show_wifi_page()
 
@@ -642,9 +688,8 @@ if wlan.isconnected():
     show_dashboard_page()
     _fetch_weather_img()
 
-# ============================================================
-#  MAIN LOOP
-# ============================================================
+
+# ── Boucle principale ───────────────────────────────────────
 data_last_sent       = time.time() - 250
 weather_last_checked = time.time() - 30
 time_last_updated    = time.time() - 55
@@ -658,7 +703,6 @@ while True:
 
             db_temp.set_text('{:.1f}'.format(temp))
             db_hum.set_text('{:.0f}%'.format(hum))
-
             _check_humidity_alert(hum)
 
             co2_color, co2_tag = co2_style(co2)
