@@ -233,24 +233,30 @@ def _get_forecast_for_city(city_name: str) -> dict:
 @app.route('/ask-question', methods=['POST'])
 def ask_question():
     """
-    Recoit un WAV depuis le M5Stack, transcrit, detecte si une ville est mentionnee.
-    Renvoie JSON :
-      - Si ville detectee : {"type":"image", "transcription":"...", "city":"Tokyo"}
-        Le M5Stack appellera ensuite /get-weather-image-large?city=Tokyo
-      - Sinon : {"type":"text", "transcription":"...", "lines":[["Label","Value"],...]}
-        Le M5Stack affichera ces paires label/valeur en mode tabulaire
+    Recoit un WAV depuis un client (M5Stack ou Streamlit), transcrit
+    avec Speech-to-Text, et repond selon le format demande.
+ 
+    Parametre optionnel : ?text_only=true
+      - Si oui (utilise par le dashboard Streamlit) :
+        Renvoie {"answer": "...", "question": "..."}
+      - Si non (utilise par le M5Stack) :
+        Renvoie {"type":"image", "transcription":"...", "city":"Tokyo"}
+        OU {"type":"text", "transcription":"...", "lines":[["lbl","val"],...]}
     """
     try:
         audio_bytes = request.data
         if not audio_bytes:
-            return jsonify({"type":"text", "transcription":"",
-                            "lines":[["Error","No audio received"]]}), 200
+            return jsonify({"error": "No audio data received"}), 400
  
         ip = request.args.get('ip', '8.8.8.8')
+        text_only = request.args.get('text_only', 'false').lower() == 'true'
  
         # 1. Speech-to-Text
         question = speech_to_text_client.transcribe_audio(audio_bytes)
         if not question:
+            sorry = "Sorry, I didn't catch that. Could you please repeat?"
+            if text_only:
+                return jsonify({"answer": sorry, "question": ""}), 200
             return jsonify({
                 "type":"text",
                 "transcription":"(could not understand)",
@@ -258,14 +264,13 @@ def ask_question():
                          ["Tip","Speak louder"]]
             }), 200
  
-        # 2. Detecter si une ville est mentionnee dans la question
+        # 2. Detection ville mentionnee
         city_extract_prompt = (
             'Extract the city name from this question if it mentions one. '
             'Question: "{}". '
             'Reply with ONLY the city name capitalized, or "none". '
             'Examples: "weather in Tokyo" -> Tokyo, '
-            '"temperature outside" -> none, '
-            '"will it rain in Paris" -> Paris.'
+            '"temperature outside" -> none.'
         ).format(question)
  
         extracted_city = vertex_ai_client.get_weather_description(
@@ -273,25 +278,7 @@ def ask_question():
             "You extract city names. Reply with ONLY the city name or 'none'."
         ).strip()
  
-        # 3a. Si ville detectee, on dit au M5Stack de demander l'image
-        if extracted_city and extracted_city.lower() != "none":
-            # Verifier que la ville existe vraiment dans OpenWeather
-            test_weather = _get_weather_for_city(extracted_city)
-            if test_weather and test_weather.get('main'):
-                return jsonify({
-                    "type":"image",
-                    "transcription": question,
-                    "city": extracted_city
-                }), 200
-            # Si l'API OpenWeather ne reconnait pas la ville, fallback texte
-            return jsonify({
-                "type":"text",
-                "transcription": question,
-                "lines":[["City", extracted_city[:18]],
-                         ["Status", "Not found"]]
-            }), 200
- 
-        # 3b. Sinon, question generale : reponse texte structuree
+        # 3. Recuperer le contexte meteo + indoor
         location_data = weather_client.fetch_location_data(ip)
         lat, lon = location_data['loc'].split(',')
         local_city = location_data.get('city', 'your location')
@@ -300,8 +287,58 @@ def ask_question():
         next_days = forecast_data['list'][:8]
         latest_indoor = bq_client.get_latest_sensor_data()
  
-        # Demande a Gemini une reponse structuree en paires label/valeur
-        # pour affichage tabulaire sur le M5Stack (320x240, max 6 lignes)
+        # 4. Si ville detectee, recuperer sa meteo aussi
+        extra_city_context = ""
+        city_is_valid = False
+        if extracted_city and extracted_city.lower() != "none":
+            city_weather = _get_weather_for_city(extracted_city)
+            if city_weather and city_weather.get('main'):
+                city_is_valid = True
+                extra_city_context = "\nWeather for {}: {}".format(
+                    extracted_city, city_weather)
+ 
+        # ── BRANCHE STREAMLIT : reponse texte naturelle ──────
+        if text_only:
+            context = (
+                "Local city: {}\n"
+                "Current outdoor weather: {}\n"
+                "Next 24h forecast: {}\n"
+                "Latest indoor sensors: {}{}\n"
+                "User question: {}"
+            ).format(local_city, current_weather, next_days,
+                     latest_indoor, extra_city_context, question)
+ 
+            SYSTEM_INSTRUCTION = (
+                "You are a smart home weather assistant. "
+                "Answer the user's question based on the provided data. "
+                "Be concise (max 80 words), friendly, helpful. "
+                "No emojis, no special characters. Always reply in English."
+            )
+ 
+            answer = vertex_ai_client.get_weather_description(
+                context, SYSTEM_INSTRUCTION)
+            return jsonify({"answer": answer, "question": question}), 200
+ 
+        # ── BRANCHE M5STACK : reponse structuree (image ou tableau) ──
+ 
+        # 5a. Si ville valide detectee, on dit au M5Stack de demander l'image
+        if city_is_valid:
+            return jsonify({
+                "type":"image",
+                "transcription": question,
+                "city": extracted_city
+            }), 200
+ 
+        # 5b. Si ville mentionnee mais introuvable, fallback texte
+        if extracted_city and extracted_city.lower() != "none":
+            return jsonify({
+                "type":"text",
+                "transcription": question,
+                "lines":[["City", extracted_city[:18]],
+                         ["Status", "Not found"]]
+            }), 200
+ 
+        # 5c. Question generale : reponse tabulaire via Gemini en JSON
         structured_prompt = (
             'User question: "{}"\n'
             'Local city: {}\n'
@@ -311,8 +348,7 @@ def ask_question():
             'Answer the question using the data above. '
             'Reply ONLY with a JSON array of 3 to 6 [label, value] pairs. '
             'Labels are short (max 12 chars), values are short (max 18 chars). '
-            'Example output: '
-            '[["Topic","Indoor temp"],["Now","22.3 C"],["Trend","Stable"]]. '
+            'Example: [["Topic","Indoor temp"],["Now","22.3 C"],["Trend","Stable"]]. '
             'No markdown, no comments, no code fences, just the JSON array.'
         ).format(question, local_city, current_weather, next_days, latest_indoor)
  
@@ -325,7 +361,7 @@ def ask_question():
             structured_prompt, SYSTEM_INSTRUCTION
         )
  
-        # Nettoyer la reponse de Gemini (peut contenir des backticks ou du markdown)
+        # Nettoyer la reponse Gemini (peut contenir des backticks markdown)
         cleaned = raw_answer.strip()
         if cleaned.startswith('```'):
             cleaned = cleaned.split('```')[1]
@@ -338,13 +374,11 @@ def ask_question():
             lines = _json.loads(cleaned)
             if not isinstance(lines, list):
                 raise ValueError("Not a list")
-            # Valider la forme [[str,str],...] et limiter la longueur
             lines = [[str(p[0])[:14], str(p[1])[:18]]
                      for p in lines if len(p) >= 2]
             if not lines:
                 lines = [["Answer", "No data"]]
         except Exception:
-            # Fallback : si Gemini n'a pas renvoye du JSON propre
             lines = [["Answer", cleaned[:18] if cleaned else "No data"]]
  
         return jsonify({
@@ -354,12 +388,14 @@ def ask_question():
         }), 200
  
     except Exception as e:
+        if request.args.get('text_only', 'false').lower() == 'true':
+            return jsonify({"answer": "Error: " + str(e)[:60],
+                            "question": ""}), 200
         return jsonify({
             "type":"text",
             "transcription":"(error)",
             "lines":[["Error", str(e)[:18]]]
         }), 200
-
 
 @app.route('/get-weather-image-large', methods=['GET'])
 def get_weather_image_large():
