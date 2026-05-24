@@ -475,7 +475,7 @@ def get_weather_image_large():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
-    @app.route('/ask-question-voice', methods=['POST'])
+@app.route('/ask-question-voice', methods=['POST'])
 def ask_question_voice():
     """Recoit l'audio du M5Stack, STT -> Gemini -> TTS, et renvoie un WAV."""
     try:
