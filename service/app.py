@@ -1,5 +1,6 @@
 import os
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -195,21 +196,26 @@ def get_forecast_image():
         draw = ImageDraw.Draw(img)
         draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
 
+        # Fetch all 3 OWM icons in parallel — avoids sequential timeouts
+        icon_codes = [fc['weather'][0]['icon'] for fc in forecasts]
+        icons = {}
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = {ex.submit(_fetch_weather_icon, code, (40, 40)): i
+                       for i, code in enumerate(icon_codes)}
+            for fut in as_completed(futures):
+                icons[futures[fut]] = fut.result()
+
         x_positions = [5, 110, 215]
         for i, fc in enumerate(forecasts):
-            x = x_positions[i]
-            date      = datetime.strptime(fc['dt_txt'], '%Y-%m-%d %H:%M:%S')
-            icon_code = fc['weather'][0]['icon']
+            x    = x_positions[i]
+            date = datetime.strptime(fc['dt_txt'], '%Y-%m-%d %H:%M:%S')
 
-            # Card background
             draw.rectangle([(x, 4), (x + 100, 126)], fill=(12, 12, 28))
-
-            draw.text((x + 4, 6), date.strftime('%a %d'),                  fill=(0, 229, 255),   font=_font(11))
-            icon = _fetch_weather_icon(icon_code, (40, 40))
-            _paste_icon(img, icon, x + 28, 18)
-            draw.text((x + 4, 62), '{:.0f}°C'.format(fc['main']['temp']), fill=(255, 171, 0),   font=_font(16))
-            draw.text((x + 4, 82), '{}%'.format(fc['main']['humidity']),   fill=(68, 138, 255),  font=_font(11))
-            draw.text((x + 4, 96), fc['weather'][0]['description'][:13],   fill=(150, 150, 180), font=_font(10))
+            draw.text((x + 4, 6),  date.strftime('%a %d'),                   fill=(0, 229, 255),   font=_font(11))
+            _paste_icon(img, icons.get(i), x + 28, 18)
+            draw.text((x + 4, 62), '{:.0f}°C'.format(fc['main']['temp']),    fill=(255, 171, 0),   font=_font(16))
+            draw.text((x + 4, 82), '{}%'.format(fc['main']['humidity']),      fill=(68, 138, 255),  font=_font(11))
+            draw.text((x + 4, 96), fc['weather'][0]['description'][:13],      fill=(150, 150, 180), font=_font(10))
             draw.text((x + 4, 111), '{:.1f}m/s'.format(fc['wind']['speed']), fill=(110, 110, 140), font=_font(10))
             if i < 2:
                 draw.line([(x + 103, 4), (x + 103, 126)], fill=(20, 20, 40), width=1)

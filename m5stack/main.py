@@ -106,9 +106,9 @@ wf_status = M5Label('', x=12,  y=150, color=C_YELLOW, font=FONT_MONT_10)
 db_time      = M5Label('', x=6,   y=3,   color=C_MID,   font=FONT_MONT_10)
 db_clock     = M5Label('', x=88,  y=3,   color=C_WHITE, font=FONT_MONT_10)
 db_status    = M5Label('', x=186, y=3,   color=C_GREEN, font=FONT_MONT_10)
-# Persistent status bar — visible on ALL pages, never cleared by hide_*
-sb_wifi      = M5Label('', x=236, y=3,   color=C_GREEN, font=FONT_MONT_10)
-sb_bat       = M5Label('', x=268, y=3,   color=C_GREEN, font=FONT_MONT_10)
+# Persistent icon images — visible on ALL pages, never hidden by hide_*
+sb_wifi      = M5Img("/flash/res/wifi_off.png", x=236, y=4)
+sb_bat       = M5Img("/flash/res/bat_unk.png",  x=262, y=4)
 db_in_lbl    = M5Label('', x=6,   y=20,  color=C_MID,   font=FONT_MONT_10)
 db_temp      = M5Label('', x=6,   y=32,  color=C_WARM,  font=FONT_MONT_34)
 db_hm_lbl    = M5Label('', x=172, y=20,  color=C_MID,   font=FONT_MONT_10)
@@ -296,27 +296,27 @@ def show_wifi_page():
 
 def _update_wifi_indicator():
     if wlan.isconnected():
-        sb_wifi.set_text('|||')
-        sb_wifi.set_text_color(C_GREEN)
+        sb_wifi.set_img_src('/flash/res/wifi_on.png')
     else:
-        sb_wifi.set_text('|..')
-        sb_wifi.set_text_color(C_RED)
+        sb_wifi.set_img_src('/flash/res/wifi_off.png')
 
 
 def _update_battery_display():
     level, charging = _get_battery()
     if level < 0:
-        sb_bat.set_text('??%')
-        sb_bat.set_text_color(C_MID)
-        return
-    if level > 50:   color = C_GREEN
-    elif level > 20: color = C_YELLOW
-    else:            color = C_RED
-    filled = max(0, min(5, int(level / 20 + 0.5)))
-    bar    = '|' * filled + ' ' * (5 - filled)
-    prefix = '+' if charging else ''
-    sb_bat.set_text('{}[{}]'.format(prefix, bar))
-    sb_bat.set_text_color(color)
+        sb_bat.set_img_src('/flash/res/bat_unk.png')
+    elif charging:
+        sb_bat.set_img_src('/flash/res/bat_chg.png')
+    elif level >= 75:
+        sb_bat.set_img_src('/flash/res/bat_100.png')
+    elif level >= 50:
+        sb_bat.set_img_src('/flash/res/bat_60.png')
+    elif level >= 25:
+        sb_bat.set_img_src('/flash/res/bat_40.png')
+    elif level >= 10:
+        sb_bat.set_img_src('/flash/res/bat_20.png')
+    else:
+        sb_bat.set_img_src('/flash/res/bat_5.png')
 
 
 def _update_status_bar():
@@ -333,7 +333,7 @@ def show_dashboard_page():
     db_hm_lbl.set_text('HUM')
     db_co2_lbl.set_text('CO2')
     db_div.set_text('____________________________')
-    db_wimg.set_hidden(False)
+    db_wimg.set_hidden(True)   # shown only after successful fetch
     db_hint.set_text('< WiFi    Q&A    Forecast >')
     db_time.set_text(fmt_date())
     db_clock.set_text(fmt_clock())
@@ -347,12 +347,14 @@ def show_forecast_page():
     screen.set_screen_bg_color(C_BG)
     hide_wifi(); hide_dashboard(); hide_qa(); hide_answer(); hide_history()
     fc_title.set_text('3-DAY FORECAST')
-    fc_img.set_hidden(False)
+    fc_img.set_hidden(True)    # shown only after successful fetch
     fc_hint.set_text('< Q&A  History  WiFi >')
     _update_status_bar()
     led_set(LED_CYAN, 15)
     if wlan.isconnected():
         _fetch_forecast_img()
+    else:
+        fc_img.set_hidden(False)  # no WiFi — show default placeholder
 
 
 def show_history_page():
@@ -361,12 +363,14 @@ def show_history_page():
     screen.set_screen_bg_color(C_BG)
     hide_wifi(); hide_dashboard(); hide_qa(); hide_answer(); hide_forecast()
     hist_title.set_text('// 24H HISTORY')
-    hist_img.set_hidden(False)
+    hist_img.set_hidden(True)   # shown only after successful fetch
     hist_hint.set_text('< Forecast  WiFi  Dashboard >')
     _update_status_bar()
     led_set(LED_CYAN, 15)
     if wlan.isconnected():
         _fetch_history_img()
+    else:
+        hist_img.set_hidden(False)  # no WiFi — show default placeholder
 
 
 def _fetch_history_img():
@@ -375,13 +379,23 @@ def _fetch_history_img():
         r = urequests.get(FLASK_URL + '/get-history-image?hours=24')
         if r.status_code == 200:
             with open('/flash/res/history_data.png', 'wb') as f:
-                f.write(r.content)
+                while True:
+                    chunk = r.raw.read(4096)
+                    if not chunk:
+                        break
+                    f.write(chunk)
             r.close()
+            gc.collect()
+            hist_img.set_hidden(True)
             hist_img.set_img_src('/flash/res/history_data.png')
+            hist_img.set_hidden(False)
         else:
             r.close()
+            hist_img.set_hidden(False)
         led_set(LED_CYAN, 15)
-    except:
+    except Exception as e:
+        print("History fetch err:", str(e))
+        hist_img.set_hidden(False)
         led_set(LED_CYAN, 15)
 
 
@@ -502,9 +516,15 @@ def _fetch_weather_img():
             FLASK_URL + '/get-weather-image?ip=' + (device_public_ip or '8.8.8.8'))
         if r.status_code == 200:
             with open('/flash/res/current_weather.png', 'wb') as f:
-                f.write(r.content)
+                while True:
+                    chunk = r.raw.read(4096)
+                    if not chunk:
+                        break
+                    f.write(chunk)
             r.close()
+            gc.collect()
             db_wimg.set_img_src('/flash/res/current_weather.png')
+            db_wimg.set_hidden(False)
         else:
             r.close()
         led_set(LED_CYAN, 15)
@@ -519,13 +539,21 @@ def _fetch_forecast_img():
             FLASK_URL + '/get-forecast-image?ip=' + (device_public_ip or '8.8.8.8'))
         if r.status_code == 200:
             with open('/flash/res/forecast_weather.png', 'wb') as f:
-                f.write(r.content)
+                while True:
+                    chunk = r.raw.read(4096)
+                    if not chunk:
+                        break
+                    f.write(chunk)
             r.close()
+            gc.collect()
             fc_img.set_img_src('/flash/res/forecast_weather.png')
+            fc_img.set_hidden(False)
         else:
             r.close()
+            fc_img.set_hidden(False)
         led_set(LED_CYAN, 15)
     except:
+        fc_img.set_hidden(False)
         led_set(LED_CYAN, 15)
 
 
