@@ -2,8 +2,8 @@
 #  Project Weather - M5Stack Core2 (VITESSE ET STABILITÉ)
 # ============================================================
 
-from m5stack_ui import M5Screen, M5Label, M5Img, FONT_MONT_10, FONT_MONT_14, FONT_MONT_34
-from m5stack import btnA, btnB, btnC, speaker
+from m5stack_ui import M5Screen, M5Label, M5Img, M5Rect, FONT_MONT_10, FONT_MONT_14, FONT_MONT_34
+from m5stack import btnA, btnB, btnC, speaker, power
 from m5stack import rgb
 import unit
 import MicrophonePDM as MIC
@@ -95,7 +95,18 @@ wf_status = M5Label('', x=12,  y=150, color=C_YELLOW, font=FONT_MONT_10)
 
 # ── Labels page Dashboard ───────────────────────────────────
 db_time      = M5Label('', x=6,   y=3,   color=C_MID,   font=FONT_MONT_10)
-db_status    = M5Label('', x=228, y=3,   color=C_GREEN, font=FONT_MONT_10)
+db_clock     = M5Label('', x=88,  y=3,   color=C_WHITE, font=FONT_MONT_10)
+db_wifi      = M5Label('', x=138, y=3,   color=C_GREEN, font=FONT_MONT_10)
+db_status    = M5Label('', x=240, y=3,   color=C_GREEN, font=FONT_MONT_10)
+db_bat_pct   = M5Label('', x=222, y=3,   color=C_GREEN, font=FONT_MONT_10)
+bat_outline  = M5Rect(x=256, y=3,  w=33, h=11, color=0x444466, fill_color=C_BG)
+bat_terminal = M5Rect(x=289, y=5,  w=4,  h=7,  color=0x444466, fill_color=0x444466)
+bat_seg0     = M5Rect(x=258, y=5,  w=5,  h=7,  color=C_BG, fill_color=C_DIM)
+bat_seg1     = M5Rect(x=264, y=5,  w=5,  h=7,  color=C_BG, fill_color=C_DIM)
+bat_seg2     = M5Rect(x=270, y=5,  w=5,  h=7,  color=C_BG, fill_color=C_DIM)
+bat_seg3     = M5Rect(x=276, y=5,  w=5,  h=7,  color=C_BG, fill_color=C_DIM)
+bat_seg4     = M5Rect(x=282, y=5,  w=5,  h=7,  color=C_BG, fill_color=C_DIM)
+BAT_SEGS     = [bat_seg0, bat_seg1, bat_seg2, bat_seg3, bat_seg4]
 db_in_lbl    = M5Label('', x=6,   y=20,  color=C_MID,   font=FONT_MONT_10)
 db_temp      = M5Label('', x=6,   y=32,  color=C_WARM,  font=FONT_MONT_34)
 db_hm_lbl    = M5Label('', x=172, y=20,  color=C_MID,   font=FONT_MONT_10)
@@ -182,6 +193,33 @@ def fmt_time():
         return ''
 
 
+def fmt_date():
+    try:
+        t = time.localtime()
+        days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+        return '{} {:02d}.{:02d}'.format(days[t[6]], t[2], t[1])
+    except:
+        return ''
+
+
+def fmt_clock():
+    try:
+        t = time.localtime()
+        return '{:02d}:{:02d}'.format(t[3], t[4])
+    except:
+        return '--:--'
+
+
+def _get_battery():
+    """Return (level 0-100, is_charging). level=-1 if unknown."""
+    try:
+        level    = power.getBatteryLevel()
+        charging = power.isCharging()
+        return int(level), bool(charging)
+    except:
+        return -1, False
+
+
 def _cleanup_wav():
     for f in ['/flash/question.wav', '/flash/answer.wav', '/flash/weather.wav']:
         try:
@@ -198,7 +236,10 @@ def hide_wifi():
 
 
 def hide_dashboard():
-    db_time.set_text('');   db_status.set_text('')
+    db_time.set_text('');  db_clock.set_text(''); db_wifi.set_text(''); db_status.set_text('')
+    db_bat_pct.set_text('')
+    for seg in BAT_SEGS: seg.set_hidden(True)
+    bat_outline.set_hidden(True); bat_terminal.set_hidden(True)
     db_in_lbl.set_text(''); db_temp.set_text('')
     db_hm_lbl.set_text(''); db_hum.set_text('')
     db_hum_alert.set_text('')
@@ -235,14 +276,47 @@ def hide_answer():
 def show_wifi_page():
     global current_page
     current_page = "wifi"
-    screen.set_screen_bg_color(0x08080F) 
-    hide_dashboard(); hide_forecast(); hide_qa(); hide_answer()
+    screen.set_screen_bg_color(0x08080F)
+    hide_dashboard(); hide_forecast(); hide_qa(); hide_answer(); hide_history()
     wf_title.set_text('//  WiFi Setup')
-    wf_hint.set_text('A / C : navigate      B : connect')
     wf_line.set_text('________________________________')
-    wf_status.set_text('Select a network')
+    if wlan.isconnected():
+        wf_hint.set_text('A/C : navigate      B : back')
+        wf_status.set_text('Connected — B to go back')
+        wf_status.set_text_color(C_GREEN)
+    else:
+        wf_hint.set_text('A/C : navigate      B : connect')
+        wf_status.set_text('Select a network')
+        wf_status.set_text_color(C_YELLOW)
     led_set(LED_BLUE)
     _render_networks()
+
+
+def _update_wifi_indicator():
+    if wlan.isconnected():
+        db_wifi.set_text('(WiFi)')
+        db_wifi.set_text_color(C_GREEN)
+    else:
+        db_wifi.set_text('(offline)')
+        db_wifi.set_text_color(C_RED)
+
+
+def _update_battery_display():
+    level, charging = _get_battery()
+    if level < 0:
+        color = C_MID
+        filled = 0
+        db_bat_pct.set_text('?%')
+    else:
+        if level > 50:   color = C_GREEN
+        elif level > 20: color = C_YELLOW
+        else:            color = C_RED
+        filled = max(0, min(5, int((level + 10) / 20)))
+        prefix = '+' if charging else ''
+        db_bat_pct.set_text('{}{}%'.format(prefix, level))
+    db_bat_pct.set_text_color(color)
+    for i, seg in enumerate(BAT_SEGS):
+        seg.set_bg_color(color if i < filled else C_DIM)
 
 
 def show_dashboard_page():
@@ -256,7 +330,12 @@ def show_dashboard_page():
     db_div.set_text('____________________________')
     db_wimg.set_hidden(False)
     db_hint.set_text('< WiFi    Q&A    Forecast >')
-    db_time.set_text(fmt_time())
+    db_time.set_text(fmt_date())
+    db_clock.set_text(fmt_clock())
+    for seg in BAT_SEGS: seg.set_hidden(False)
+    bat_outline.set_hidden(False); bat_terminal.set_hidden(False)
+    _update_wifi_indicator()
+    _update_battery_display()
     led_set(LED_CYAN, 15)
 
 
@@ -684,7 +763,10 @@ def _btn_a():
 
 def _btn_b():
     if current_page == "wifi":
-        connect_selected()
+        if wlan.isconnected():
+            show_dashboard_page()
+        else:
+            connect_selected()
     elif current_page == "dashboard":
         show_qa_page()
     elif current_page == "qa":
@@ -770,7 +852,10 @@ while True:
 
             now = time.time()
             if now - time_last_updated >= 60:
-                db_time.set_text(fmt_time())
+                db_time.set_text(fmt_date())
+                db_clock.set_text(fmt_clock())
+                _update_wifi_indicator()
+                _update_battery_display()
                 time_last_updated = now
 
             if wlan.isconnected():

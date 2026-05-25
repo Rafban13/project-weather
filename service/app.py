@@ -92,8 +92,8 @@ def get_outdoor_weather():
 def _fetch_weather_icon(icon_code, size):
     """Download an OWM icon and return it as an RGBA PIL Image, or None on failure."""
     try:
-        url = 'https://openweathermap.org/img/wn/{}@2x.png'.format(icon_code)
-        resp = requests.get(url, timeout=3)
+        url = 'https://openweathermap.org/img/wn/{}.png'.format(icon_code)
+        resp = requests.get(url, timeout=5)
         if resp.status_code == 200:
             icon = Image.open(io.BytesIO(resp.content)).convert('RGBA')
             return icon.resize(size, Image.LANCZOS)
@@ -198,18 +198,18 @@ def get_forecast_image():
 
 @app.route('/get-history-image', methods=['GET'])
 def get_history_image():
-    """Generate a 320x200 PNG graph of the last 24h of indoor sensor data."""
+    """Generate a 320x200 PNG with a stat header + 24h indoor sensor graph."""
     try:
         hours = int(request.args.get('hours', 24))
         rows  = bq_client.get_historical_data(hours)
 
-        BG = (8, 8, 20)
+        BG_HEX  = '#080814'
+        BG_CARD = '#0F0F28'
 
         if not rows or len(rows) < 2:
-            img  = Image.new('RGB', (320, 200), color=BG)
+            img  = Image.new('RGB', (320, 200), color=(8, 8, 20))
             draw = ImageDraw.Draw(img)
             draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
-            draw.text((10, 6), 'LAST {}H — INDOOR HISTORY'.format(hours), fill=(0, 229, 255))
             draw.text((80, 95), 'No data available', fill=(100, 100, 130))
             buf = io.BytesIO()
             img.save(buf, format='PNG')
@@ -221,34 +221,73 @@ def get_history_image():
         df = df.sort_values('measurement_time')
         times = df['measurement_time'].dt.tz_convert('Europe/Zurich')
 
-        BG_HEX = '#080814'
-        fig, ax1 = plt.subplots(figsize=(3.2, 2.0), dpi=100)
-        fig.patch.set_facecolor(BG_HEX)
-        ax1.set_facecolor(BG_HEX)
+        latest_temp = df['indoor_temp'].iloc[-1]
+        latest_hum  = df['indoor_humidity'].iloc[-1]
+        latest_co2  = df['indoor_air_quality'].iloc[-1]
 
+        if   latest_co2 < 600:  co2_label, co2_color = 'EXCELLENT', '#00E676'
+        elif latest_co2 < 1000: co2_label, co2_color = 'GOOD',      '#FFEA00'
+        elif latest_co2 < 2000: co2_label, co2_color = 'POOR',      '#FFAB00'
+        else:                   co2_label, co2_color = 'DANGER',    '#FF1744'
+
+        from matplotlib.gridspec import GridSpec
+        fig = plt.figure(figsize=(3.2, 2.0), dpi=100, facecolor=BG_HEX)
+        gs  = GridSpec(2, 3, figure=fig, height_ratios=[1, 2.2], hspace=0.08,
+                       wspace=0.05, left=0.08, right=0.97, top=0.97, bottom=0.18)
+
+        # ── Stat cards (top row) ────────────────────────────────
+        stats = [
+            ('INDOOR',  '{:.1f}°C'.format(latest_temp), '#FFAB00'),
+            ('HUMIDITY', '{:.0f}%'.format(latest_hum),  '#448AFF'),
+            ('CO2',     '{:.0f}p'.format(latest_co2),   co2_color),
+        ]
+        for col, (label, value, color) in enumerate(stats):
+            ax = fig.add_subplot(gs[0, col])
+            ax.set_facecolor(BG_CARD)
+            ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+            ax.axis('off')
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            ax.axhline(y=0.97, color=color, linewidth=2.5, xmin=0.04, xmax=0.96,
+                       solid_capstyle='round')
+            ax.text(0.5, 0.62, label,  color='#7777AA', fontsize=5.5,
+                    ha='center', va='center', transform=ax.transAxes, fontweight='bold',
+                    letterspacing=0.5)
+            ax.text(0.5, 0.22, value,  color=color, fontsize=10,
+                    ha='center', va='center', transform=ax.transAxes, fontweight='bold')
+            if label == 'CO2':
+                ax.text(0.5, -0.02, co2_label, color=co2_color, fontsize=4.5,
+                        ha='center', va='center', transform=ax.transAxes, fontweight='bold')
+
+        # ── Graph (bottom row) ──────────────────────────────────
+        ax1 = fig.add_subplot(gs[1, :])
+        ax1.set_facecolor(BG_HEX)
         ax1.plot(times, df['indoor_temp'],     color='#FFAB00', linewidth=1.5, label='Temp °C')
         ax1.plot(times, df['indoor_humidity'], color='#448AFF', linewidth=1.5, label='Hum %')
-        ax1.tick_params(colors='#7777AA', labelsize=6)
+        ax1.tick_params(colors='#7777AA', labelsize=5.5)
         for spine in ax1.spines.values():
-            spine.set_color('#333344')
+            spine.set_color('#1A1A30')
+        ax1.spines['top'].set_visible(False)
+        ax1.yaxis.set_tick_params(labelsize=5.5)
 
         ax2 = ax1.twinx()
-        ax2.plot(times, df['indoor_air_quality'], color='#00E676', linewidth=1.5, label='CO₂ ppm')
-        ax2.tick_params(colors='#00E676', labelsize=6)
-        ax2.spines['right'].set_color('#00E676')
+        ax2.plot(times, df['indoor_air_quality'], color=co2_color, linewidth=1.2,
+                 linestyle='--', label='CO₂ ppm', alpha=0.8)
+        ax2.tick_params(colors=co2_color, labelsize=5.5)
+        ax2.spines['right'].set_color(co2_color)
         for s in ['top', 'bottom', 'left']:
-            ax2.spines[s].set_color('#333344')
+            ax2.spines[s].set_color('#1A1A30')
 
         ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        ax1.tick_params(axis='x', rotation=30, labelsize=6)
+        ax1.xaxis.set_major_locator(mdates.HourLocator(interval=4))
+        ax1.tick_params(axis='x', rotation=30, labelsize=5.5)
+        ax1.grid(axis='y', color='#1A1A30', linewidth=0.5)
 
         lines1, lbl1 = ax1.get_legend_handles_labels()
         lines2, lbl2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, lbl1 + lbl2,
-                   loc='upper left', fontsize=5,
-                   facecolor='#0A0A0F', edgecolor='#333344', labelcolor='white')
-
-        fig.tight_layout(pad=0.4)
+        ax1.legend(lines1 + lines2, lbl1 + lbl2, loc='upper right', fontsize=4.5,
+                   facecolor='#0A0A1A', edgecolor='#333344', labelcolor='white',
+                   framealpha=0.85)
 
         buf = io.BytesIO()
         fig.savefig(buf, format='PNG', dpi=100, facecolor=BG_HEX)
