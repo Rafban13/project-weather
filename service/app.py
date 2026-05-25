@@ -11,7 +11,7 @@ from weather_client import WeatherClient
 from vertexai_client import VertexAIClient
 from texttospeech_client import TextToSpeechClient
 from speechtotext_client import SpeechToTextClient
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import io
 from datetime import datetime
 
@@ -111,6 +111,14 @@ def _paste_icon(base_img, icon, x, y, bg_color=(8, 8, 20)):
     base_img.paste(bg.convert('RGB'), (x, y))
 
 
+def _font(size):
+    """Load a scaled default font (Pillow 10+) or fall back to bitmap default."""
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
 @app.route('/get-weather-image', methods=['GET'])
 def get_weather_image():
     """Generate a 320x100 PNG showing current outdoor weather + OWM icon."""
@@ -131,19 +139,34 @@ def get_weather_image():
         img  = Image.new('RGB', (320, 100), color=(8, 8, 20))
         draw = ImageDraw.Draw(img)
 
+        # Accent bar top
         draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
-        draw.text((10, 6),  city[:20],                     fill=(0, 229, 255))
-        draw.text((10, 22), '{:.1f}C'.format(temp),        fill=(255, 171, 0))
-        draw.text((10, 60), 'Feels {:.0f}C'.format(feels), fill=(100, 100, 130))
-        draw.text((10, 74), desc[:24],                     fill=(200, 200, 220))
-        draw.line([(165, 8), (165, 92)], fill=(30, 30, 50), width=1)
-        draw.text((175, 10), 'Hum',                        fill=(80, 100, 120))
-        draw.text((175, 24), '{}%'.format(hum),            fill=(68, 138, 255))
-        draw.text((175, 50), 'Wind',                       fill=(80, 100, 120))
-        draw.text((175, 64), '{:.1f}m/s'.format(wind),     fill=(150, 150, 180))
 
-        icon = _fetch_weather_icon(icon_code, (68, 68))
-        _paste_icon(img, icon, 248, 16)
+        # Left panel background card
+        draw.rectangle([(0, 2), (158, 100)], fill=(12, 12, 28))
+
+        # City name
+        draw.text((8, 5), city[:18], fill=(0, 229, 255), font=_font(11))
+
+        # Big temperature
+        draw.text((8, 20), '{:.1f}°C'.format(temp), fill=(255, 171, 0), font=_font(28))
+
+        # Feels like + description
+        draw.text((8, 72), 'Feels {:.0f}°C'.format(feels), fill=(90, 90, 120), font=_font(10))
+        draw.text((8, 84), desc[:22], fill=(180, 180, 210), font=_font(10))
+
+        # Divider
+        draw.line([(160, 4), (160, 96)], fill=(25, 25, 45), width=1)
+
+        # Right stats panel
+        draw.text((166, 5),  'Humidity',            fill=(70, 90, 110),  font=_font(10))
+        draw.text((166, 18), '{}%'.format(hum),     fill=(68, 138, 255), font=_font(16))
+        draw.text((166, 48), 'Wind',                fill=(70, 90, 110),  font=_font(10))
+        draw.text((166, 60), '{:.1f} m/s'.format(wind), fill=(140, 140, 170), font=_font(14))
+
+        # Weather icon (top-right corner)
+        icon = _fetch_weather_icon(icon_code, (56, 56))
+        _paste_icon(img, icon, 258, 6)
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
@@ -172,21 +195,24 @@ def get_forecast_image():
         draw = ImageDraw.Draw(img)
         draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
 
-        x_positions = [10, 115, 220]
+        x_positions = [5, 110, 215]
         for i, fc in enumerate(forecasts):
             x = x_positions[i]
             date      = datetime.strptime(fc['dt_txt'], '%Y-%m-%d %H:%M:%S')
             icon_code = fc['weather'][0]['icon']
 
-            draw.text((x, 6),  date.strftime('%a %d'),                  fill=(0, 229, 255))
-            icon = _fetch_weather_icon(icon_code, (36, 36))
+            # Card background
+            draw.rectangle([(x, 4), (x + 100, 126)], fill=(12, 12, 28))
+
+            draw.text((x + 4, 6), date.strftime('%a %d'),                  fill=(0, 229, 255),   font=_font(11))
+            icon = _fetch_weather_icon(icon_code, (40, 40))
             _paste_icon(img, icon, x + 28, 18)
-            draw.text((x, 58), '{}C'.format(round(fc['main']['temp'])), fill=(255, 171, 0))
-            draw.text((x, 74), '{}%'.format(fc['main']['humidity']),    fill=(68, 138, 255))
-            draw.text((x, 90), fc['weather'][0]['description'][:12],    fill=(160, 160, 180))
-            draw.text((x, 110), '{:.1f}m/s'.format(fc['wind']['speed']),fill=(120, 120, 150))
+            draw.text((x + 4, 62), '{:.0f}°C'.format(fc['main']['temp']), fill=(255, 171, 0),   font=_font(16))
+            draw.text((x + 4, 82), '{}%'.format(fc['main']['humidity']),   fill=(68, 138, 255),  font=_font(11))
+            draw.text((x + 4, 96), fc['weather'][0]['description'][:13],   fill=(150, 150, 180), font=_font(10))
+            draw.text((x + 4, 111), '{:.1f}m/s'.format(fc['wind']['speed']), fill=(110, 110, 140), font=_font(10))
             if i < 2:
-                draw.line([(x + 100, 4), (x + 100, 126)], fill=(30, 30, 50), width=1)
+                draw.line([(x + 103, 4), (x + 103, 126)], fill=(20, 20, 40), width=1)
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
@@ -579,44 +605,37 @@ def get_weather_image_large():
         wind  = weather_data.get("wind", {}).get("speed", 0)
         name  = weather_data.get("name", city)
  
-        # Palette coherente avec le design du M5Stack (dark minimalist)
-        img  = Image.new('RGB', (320, 240), color=(10, 10, 15))
+        img  = Image.new('RGB', (320, 240), color=(8, 8, 20))
         draw = ImageDraw.Draw(img)
- 
-        # Bandeau accent en haut
-        draw.rectangle([(0, 0), (320, 3)], fill=(0, 229, 255))
- 
-        # Ville en haut
-        draw.text((14, 12), name[:24], fill=(0, 229, 255))
- 
-        # Temperature en gros
-        draw.text((14, 35), '{:.1f}C'.format(temp), fill=(255, 171, 0))
- 
-        # "Feels like" sous la temp
-        draw.text((14, 78), 'Feels {:.0f}C'.format(feels), fill=(120, 120, 150))
- 
-        # Description meteo
-        draw.text((14, 100), desc[:32], fill=(220, 220, 240))
- 
-        # Separateur horizontal
-        draw.line([(14, 125), (306, 125)], fill=(60, 60, 80), width=1)
- 
-        # Colonne gauche : humidite et vent
-        draw.text((14, 140), 'Humidity', fill=(100, 110, 130))
-        draw.text((14, 155), '{}%'.format(hum), fill=(68, 138, 255))
-        draw.text((14, 180), 'Wind', fill=(100, 110, 130))
-        draw.text((14, 195), '{:.1f} m/s'.format(wind), fill=(150, 150, 180))
- 
-        # Colonne droite : pression et timestamp UTC
-        draw.text((170, 140), 'Pressure', fill=(100, 110, 130))
-        draw.text((170, 155), '{} hPa'.format(press), fill=(200, 200, 220))
- 
+
+        draw.rectangle([(0, 0),   (320, 3)],   fill=(0, 229, 255))
+        draw.rectangle([(0, 237), (320, 240)],  fill=(0, 229, 255))
+
+        # Icon top-right
+        icon_code = weather_data["weather"][0]["icon"]
+        icon = _fetch_weather_icon(icon_code, (72, 72))
+        _paste_icon(img, icon, 234, 16, bg_color=(8, 8, 20))
+
+        draw.text((14, 8),  name[:22],                        fill=(0, 229, 255),   font=_font(13))
+        draw.text((14, 26), '{:.1f}°C'.format(temp),          fill=(255, 171, 0),   font=_font(38))
+        draw.text((14, 80), 'Feels {:.0f}°C'.format(feels),   fill=(100, 100, 130), font=_font(12))
+        draw.text((14, 96), desc[:28],                         fill=(200, 200, 230), font=_font(12))
+
+        draw.line([(14, 122), (306, 122)], fill=(30, 30, 50), width=1)
+
+        stats = [
+            ('Humidity', '{}%'.format(hum),         (68, 138, 255)),
+            ('Wind',     '{:.1f} m/s'.format(wind), (160, 160, 190)),
+            ('Pressure', '{} hPa'.format(press),    (180, 180, 210)),
+        ]
+        for idx, (label, value, color) in enumerate(stats):
+            cx = 14 + idx * 102
+            draw.rectangle([(cx, 128), (cx + 96, 200)], fill=(12, 12, 30))
+            draw.text((cx + 6, 132), label,  fill=(80, 90, 110), font=_font(11))
+            draw.text((cx + 6, 148), value,  fill=color,         font=_font(14))
+
         now_utc = datetime.utcnow().strftime('%H:%M UTC')
-        draw.text((170, 180), 'Updated', fill=(100, 110, 130))
-        draw.text((170, 195), now_utc, fill=(150, 150, 180))
- 
-        # Bandeau accent en bas
-        draw.rectangle([(0, 237), (320, 240)], fill=(0, 229, 255))
+        draw.text((14, 210), 'Updated ' + now_utc, fill=(60, 60, 90), font=_font(10))
  
         buf = io.BytesIO()
         img.save(buf, format='PNG')
