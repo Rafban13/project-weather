@@ -113,6 +113,11 @@ fc_title = M5Label('', x=85, y=3,   color=C_ACCENT, font=FONT_MONT_14)
 fc_img   = M5Img("/flash/res/default_future_weather.png", x=0, y=22)
 fc_hint  = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
+# ── Labels page History ──────────────────────────────────────
+hist_title = M5Label('', x=55, y=3,   color=C_ACCENT, font=FONT_MONT_14)
+hist_img   = M5Img("/flash/res/default_future_weather.png", x=0, y=22)
+hist_hint  = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
+
 # ── Labels page Q&A ─────────────────────────────────────────
 qa_title  = M5Label('', x=85, y=8,   color=C_ACCENT, font=FONT_MONT_14)
 qa_line   = M5Label('', x=12, y=28,  color=C_DIM,    font=FONT_MONT_10)
@@ -207,6 +212,11 @@ def hide_forecast():
     fc_img.set_hidden(True)
 
 
+def hide_history():
+    hist_title.set_text(''); hist_hint.set_text('')
+    hist_img.set_hidden(True)
+
+
 def hide_qa():
     qa_title.set_text(''); qa_line.set_text('')
     qa_info.set_text('');  qa_info2.set_text('')
@@ -238,8 +248,8 @@ def show_wifi_page():
 def show_dashboard_page():
     global current_page
     current_page = "dashboard"
-    screen.set_screen_bg_color(C_BG) 
-    hide_wifi(); hide_forecast(); hide_qa(); hide_answer()
+    screen.set_screen_bg_color(C_BG)
+    hide_wifi(); hide_forecast(); hide_qa(); hide_answer(); hide_history()
     db_in_lbl.set_text('INDOOR')
     db_hm_lbl.set_text('HUM')
     db_co2_lbl.set_text('CO2')
@@ -253,21 +263,50 @@ def show_dashboard_page():
 def show_forecast_page():
     global current_page
     current_page = "forecast"
-    screen.set_screen_bg_color(C_BG) 
-    hide_wifi(); hide_dashboard(); hide_qa(); hide_answer()
+    screen.set_screen_bg_color(C_BG)
+    hide_wifi(); hide_dashboard(); hide_qa(); hide_answer(); hide_history()
     fc_title.set_text('3-DAY FORECAST')
     fc_img.set_hidden(False)
-    fc_hint.set_text('< Q&A             WiFi >')
+    fc_hint.set_text('< Q&A  History  WiFi >')
     led_set(LED_CYAN, 15)
     if wlan.isconnected():
         _fetch_forecast_img()
 
 
+def show_history_page():
+    global current_page
+    current_page = "history"
+    screen.set_screen_bg_color(C_BG)
+    hide_wifi(); hide_dashboard(); hide_qa(); hide_answer(); hide_forecast()
+    hist_title.set_text('// 24H INDOOR HISTORY')
+    hist_img.set_hidden(False)
+    hist_hint.set_text('< Forecast  WiFi  Dashboard >')
+    led_set(LED_CYAN, 15)
+    if wlan.isconnected():
+        _fetch_history_img()
+
+
+def _fetch_history_img():
+    try:
+        led_set(LED_ORANGE, 10)
+        r = urequests.get(FLASK_URL + '/get-history-image?hours=24')
+        if r.status_code == 200:
+            with open('/flash/res/history_data.png', 'wb') as f:
+                f.write(r.content)
+            r.close()
+            hist_img.set_img_src('/flash/res/history_data.png')
+        else:
+            r.close()
+        led_set(LED_CYAN, 15)
+    except:
+        led_set(LED_CYAN, 15)
+
+
 def show_qa_page():
     global current_page
     current_page = "qa"
-    screen.set_screen_bg_color(C_BG) # Nettoie l'écran des pixels de l'image précédente
-    hide_wifi(); hide_dashboard(); hide_forecast(); hide_answer()
+    screen.set_screen_bg_color(C_BG)
+    hide_wifi(); hide_dashboard(); hide_forecast(); hide_answer(); hide_history()
     qa_title.set_text('//  Ask Me')
     qa_line.set_text('________________________________')
     qa_info.set_text('Press B to record')
@@ -637,8 +676,9 @@ def _btn_a():
         show_dashboard_page()
     elif current_page == "forecast":
         show_qa_page()
+    elif current_page == "history":
+        show_forecast_page()
     elif current_page == "answer":
-        # Fenêtre de sortie : on revient proprement en arrière sans faire de reset
         show_qa_page()
 
 
@@ -650,6 +690,8 @@ def _btn_b():
     elif current_page == "qa":
         _ask_question()
     elif current_page == "forecast":
+        show_history_page()
+    elif current_page == "history":
         show_wifi_page()
     elif current_page == "answer":
         show_qa_page()
@@ -666,6 +708,10 @@ def _btn_c():
         show_forecast_page()
     elif current_page == "qa":
         show_forecast_page()
+    elif current_page == "forecast":
+        show_wifi_page()
+    elif current_page == "history":
+        show_dashboard_page()
     elif current_page == "answer":
         show_qa_page()
 

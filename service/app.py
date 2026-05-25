@@ -1,4 +1,10 @@
 import os
+import requests
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import pandas as pd
 from flask import Flask, jsonify, request, send_file
 from bigquery_client import BigQueryClient
 from weather_client import WeatherClient
@@ -83,35 +89,61 @@ def get_outdoor_weather():
 #  WEATHER IMAGES
 # ─────────────────────────────────────────────────────────────
 
+def _fetch_weather_icon(icon_code, size):
+    """Download an OWM icon and return it as an RGBA PIL Image, or None on failure."""
+    try:
+        url = 'https://openweathermap.org/img/wn/{}@2x.png'.format(icon_code)
+        resp = requests.get(url, timeout=3)
+        if resp.status_code == 200:
+            icon = Image.open(io.BytesIO(resp.content)).convert('RGBA')
+            return icon.resize(size, Image.LANCZOS)
+    except Exception:
+        pass
+    return None
+
+
+def _paste_icon(base_img, icon, x, y, bg_color=(8, 8, 20)):
+    """Paste an RGBA icon onto a RGB base image using its alpha channel."""
+    if icon is None:
+        return
+    bg = Image.new('RGBA', icon.size, bg_color + (255,))
+    bg.paste(icon, mask=icon.split()[3])
+    base_img.paste(bg.convert('RGB'), (x, y))
+
+
 @app.route('/get-weather-image', methods=['GET'])
 def get_weather_image():
-    """Generate a 320x95 PNG showing current outdoor weather for M5Stack."""
+    """Generate a 320x100 PNG showing current outdoor weather + OWM icon."""
     try:
         ip = request.args.get('ip', '8.8.8.8')
         location = weather_client.fetch_location_data(ip)
         lat, lon = location['loc'].split(',')
         current = weather_client.fetch_weather_data(lat, lon, current_weather=True)
 
-        temp  = current["main"]["temp"]
-        feels = current["main"]["feels_like"]
-        hum   = current["main"]["humidity"]
-        desc  = current["weather"][0]["description"].title()
-        city  = current.get("name", "Unknown")
-        wind  = current.get("wind", {}).get("speed", 0)
+        temp      = current["main"]["temp"]
+        feels     = current["main"]["feels_like"]
+        hum       = current["main"]["humidity"]
+        desc      = current["weather"][0]["description"].title()
+        icon_code = current["weather"][0]["icon"]
+        city      = current.get("name", "Unknown")
+        wind      = current.get("wind", {}).get("speed", 0)
 
-        img  = Image.new('RGB', (320, 95), color=(8, 8, 20))
+        img  = Image.new('RGB', (320, 100), color=(8, 8, 20))
         draw = ImageDraw.Draw(img)
 
         draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
-        draw.text((10, 6),  city[:18],                    fill=(0, 229, 255))
-        draw.text((10, 22), '{:.1f}C'.format(temp),       fill=(255, 171, 0))
-        draw.text((10, 58), 'Feels {:.0f}C'.format(feels),fill=(100, 100, 130))
-        draw.text((10, 72), desc[:28],                    fill=(200, 200, 220))
-        draw.text((210, 22), 'Hum',                       fill=(80, 100, 120))
-        draw.text((210, 36), '{}%'.format(hum),           fill=(68, 138, 255))
-        draw.text((210, 58), 'Wind',                      fill=(80, 100, 120))
-        draw.text((210, 72), '{:.1f}m/s'.format(wind),    fill=(150, 150, 180))
-        draw.line([(200, 8), (200, 88)], fill=(30, 30, 50), width=1)
+        draw.text((10, 6),  city[:20],                     fill=(0, 229, 255))
+        draw.text((10, 22), '{:.1f}C'.format(temp),        fill=(255, 171, 0))
+        draw.text((10, 60), 'Feels {:.0f}C'.format(feels), fill=(100, 100, 130))
+        draw.text((10, 74), desc[:24],                     fill=(200, 200, 220))
+        draw.line([(165, 8), (165, 92)], fill=(30, 30, 50), width=1)
+        draw.text((175, 10), 'Hum',                        fill=(80, 100, 120))
+        draw.text((175, 24), '{}%'.format(hum),            fill=(68, 138, 255))
+        draw.text((175, 50), 'Wind',                       fill=(80, 100, 120))
+        draw.text((175, 64), '{:.1f}m/s'.format(wind),     fill=(150, 150, 180))
+
+        icon = _fetch_weather_icon(icon_code, (68, 68))
+        _paste_icon(img, icon, 248, 16)
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
@@ -123,7 +155,7 @@ def get_weather_image():
 
 @app.route('/get-forecast-image', methods=['GET'])
 def get_forecast_image():
-    """Generate a 320x110 PNG showing 3-day forecast for M5Stack."""
+    """Generate a 320x130 PNG showing 3-day forecast with OWM icons."""
     try:
         ip = request.args.get('ip', '8.8.8.8')
         location = weather_client.fetch_location_data(ip)
@@ -136,26 +168,102 @@ def get_forecast_image():
             forecast_data['list'][24],
         ]
 
-        img  = Image.new('RGB', (320, 110), color=(8, 8, 20))
+        img  = Image.new('RGB', (320, 130), color=(8, 8, 20))
         draw = ImageDraw.Draw(img)
         draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
 
         x_positions = [10, 115, 220]
         for i, fc in enumerate(forecasts):
             x = x_positions[i]
-            date = datetime.strptime(fc['dt_txt'], '%Y-%m-%d %H:%M:%S')
-            draw.text((x, 6),  date.strftime('%a %d'),                     fill=(0, 229, 255))
-            draw.text((x, 26), '{}C'.format(round(fc['main']['temp'])),    fill=(255, 171, 0))
-            draw.text((x, 46), '{}%'.format(fc['main']['humidity']),       fill=(68, 138, 255))
-            draw.text((x, 66), fc['weather'][0]['description'][:12],       fill=(160, 160, 180))
-            draw.text((x, 86), '{:.1f}m/s'.format(fc['wind']['speed']),    fill=(120, 120, 150))
+            date      = datetime.strptime(fc['dt_txt'], '%Y-%m-%d %H:%M:%S')
+            icon_code = fc['weather'][0]['icon']
+
+            draw.text((x, 6),  date.strftime('%a %d'),                  fill=(0, 229, 255))
+            icon = _fetch_weather_icon(icon_code, (36, 36))
+            _paste_icon(img, icon, x + 28, 18)
+            draw.text((x, 58), '{}C'.format(round(fc['main']['temp'])), fill=(255, 171, 0))
+            draw.text((x, 74), '{}%'.format(fc['main']['humidity']),    fill=(68, 138, 255))
+            draw.text((x, 90), fc['weather'][0]['description'][:12],    fill=(160, 160, 180))
+            draw.text((x, 110), '{:.1f}m/s'.format(fc['wind']['speed']),fill=(120, 120, 150))
             if i < 2:
-                draw.line([(x + 95, 4), (x + 95, 106)], fill=(30, 30, 50), width=1)
+                draw.line([(x + 100, 4), (x + 100, 126)], fill=(30, 30, 50), width=1)
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
         buf.seek(0)
         return send_file(buf, mimetype='image/png')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/get-history-image', methods=['GET'])
+def get_history_image():
+    """Generate a 320x200 PNG graph of the last 24h of indoor sensor data."""
+    try:
+        hours = int(request.args.get('hours', 24))
+        rows  = bq_client.get_historical_data(hours)
+
+        BG = (8, 8, 20)
+
+        if not rows or len(rows) < 2:
+            img  = Image.new('RGB', (320, 200), color=BG)
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
+            draw.text((10, 6), 'LAST {}H — INDOOR HISTORY'.format(hours), fill=(0, 229, 255))
+            draw.text((80, 95), 'No data available', fill=(100, 100, 130))
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            buf.seek(0)
+            return send_file(buf, mimetype='image/png')
+
+        df = pd.DataFrame(rows)
+        df['measurement_time'] = pd.to_datetime(df['measurement_time'], utc=True)
+        df = df.sort_values('measurement_time')
+        times = df['measurement_time'].dt.tz_convert('Europe/Zurich')
+
+        BG_HEX = '#080814'
+        fig, ax1 = plt.subplots(figsize=(3.2, 2.0), dpi=100)
+        fig.patch.set_facecolor(BG_HEX)
+        ax1.set_facecolor(BG_HEX)
+
+        ax1.plot(times, df['indoor_temp'],     color='#FFAB00', linewidth=1.5, label='Temp °C')
+        ax1.plot(times, df['indoor_humidity'], color='#448AFF', linewidth=1.5, label='Hum %')
+        ax1.tick_params(colors='#7777AA', labelsize=6)
+        for spine in ax1.spines.values():
+            spine.set_color('#333344')
+
+        ax2 = ax1.twinx()
+        ax2.plot(times, df['indoor_air_quality'], color='#00E676', linewidth=1.5, label='CO₂ ppm')
+        ax2.tick_params(colors='#00E676', labelsize=6)
+        ax2.spines['right'].set_color('#00E676')
+        for s in ['top', 'bottom', 'left']:
+            ax2.spines[s].set_color('#333344')
+
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax1.tick_params(axis='x', rotation=30, labelsize=6)
+
+        lines1, lbl1 = ax1.get_legend_handles_labels()
+        lines2, lbl2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, lbl1 + lbl2,
+                   loc='upper left', fontsize=5,
+                   facecolor='#0A0A0F', edgecolor='#333344', labelcolor='white')
+
+        fig.tight_layout(pad=0.4)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='PNG', dpi=100, facecolor=BG_HEX)
+        plt.close(fig)
+        buf.seek(0)
+
+        result_img = Image.open(buf).convert('RGB')
+        draw = ImageDraw.Draw(result_img)
+        draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
+        draw.rectangle([(0, 197), (320, 200)], fill=(0, 229, 255))
+
+        final_buf = io.BytesIO()
+        result_img.save(final_buf, format='PNG')
+        final_buf.seek(0)
+        return send_file(final_buf, mimetype='image/png')
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

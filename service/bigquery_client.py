@@ -41,7 +41,7 @@ class BigQueryClient:
             
         return "Data inserted successfully"
     
-    def get_latest_sensor_data(self) -> dict:      # ← tu ajoutes ici
+    def get_latest_sensor_data(self) -> dict:
         """Return the most recent row from sensor_data for device startup sync."""
         query = f"""
             SELECT *
@@ -53,3 +53,14 @@ class BigQueryClient:
         for row in result:
             return dict(row)
         return {}
+
+    def get_historical_data(self, hours: int = 24) -> list:
+        """Return the last N hours of sensor readings ordered by time."""
+        query = f"""
+            SELECT measurement_time, indoor_temp, indoor_humidity, indoor_air_quality
+            FROM `{self.table_id}`
+            WHERE measurement_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
+            ORDER BY measurement_time ASC
+        """
+        result = self.client.query(query).result()
+        return [dict(row) for row in result]
