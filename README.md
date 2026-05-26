@@ -3,9 +3,17 @@
 > Indoor & Outdoor Weather Monitoring System  
 > Cloud and Advanced Analytics — Spring 2026
 
+## 🌐 Live Dashboard
+
+🚀 **[https://weather-dashboard-197991375095.europe-west6.run.app](https://weather-dashboard-197991375095.europe-west6.run.app)**
+
 ## 🎬 Demo Video
 
 ▶️ [Watch on YouTube](https://youtu.be/_qHEpmxgNes)
+
+## 🔗 GitHub Repository
+
+[https://github.com/Rafban13/project-weather](https://github.com/Rafban13/project-weather)
 
 ---
 
