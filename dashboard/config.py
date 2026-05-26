@@ -6,7 +6,7 @@ DATASET_ID = os.environ.get("BQ_DATASET_ID", "weather_data")
 TABLE_ID   = os.environ.get("BQ_TABLE_ID", "sensor_data")
  
 # OpenWeatherMap
-OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY", "e563987fe14945673a0204d4d4a30ce2")
+OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 CITY         = os.environ.get("CITY", "Lausanne")
 COUNTRY_CODE = os.environ.get("COUNTRY_CODE", "CH")
  
