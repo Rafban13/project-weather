@@ -54,6 +54,7 @@ time.sleep(1)
 
 device_public_ip       = None
 current_page           = "wifi"
+_prev_page             = "dashboard"
 selected_network_index = 0
 last_tts_played        = 0
 last_outdoor_temp      = 0
@@ -119,17 +120,14 @@ db_co2       = M5Label('', x=168, y=102, color=C_GREEN, font=FONT_MONT_14)
 db_co2_tag   = M5Label('', x=168, y=118, color=C_GREEN, font=FONT_MONT_10)
 db_div       = M5Label('', x=6,   y=120, color=C_DIM,   font=FONT_MONT_10)
 db_wimg      = M5Img("/flash/res/default_current_weather.png", x=0, y=128)
-db_hint      = M5Label('', x=6,   y=226, color=C_DIM,   font=FONT_MONT_10)
 
 # ── Labels page Forecast ────────────────────────────────────
 fc_title = M5Label('', x=85, y=3,   color=C_ACCENT, font=FONT_MONT_14)
 fc_img   = M5Img("/flash/res/default_future_weather.png", x=0, y=22)
-fc_hint  = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
 # ── Labels page History ──────────────────────────────────────
 hist_title = M5Label('', x=55, y=3,   color=C_ACCENT, font=FONT_MONT_14)
 hist_img   = M5Img("/flash/res/default_future_weather.png", x=0, y=22)
-hist_hint  = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
 # ── Labels page Q&A ─────────────────────────────────────────
 qa_title  = M5Label('', x=85, y=8,   color=C_ACCENT, font=FONT_MONT_14)
@@ -137,7 +135,6 @@ qa_line   = M5Label('', x=12, y=28,  color=C_DIM,    font=FONT_MONT_10)
 qa_info   = M5Label('', x=12, y=50,  color=C_WHITE,  font=FONT_MONT_14)
 qa_info2  = M5Label('', x=12, y=75,  color=C_MID,    font=FONT_MONT_14)
 qa_status = M5Label('', x=12, y=110, color=C_YELLOW, font=FONT_MONT_14)
-qa_hint   = M5Label('', x=6,  y=226, color=C_DIM,    font=FONT_MONT_10)
 
 # ── Labels page Reponse ───────────────────
 ans_title    = M5Label('', x=12, y=8,   color=C_ACCENT, font=FONT_MONT_14)
@@ -155,11 +152,23 @@ ans_lbl_4 = M5Label('', x=12,  y=156, color=C_MID,   font=FONT_MONT_14)
 ans_val_4 = M5Label('', x=160, y=156, color=C_WARM,  font=FONT_MONT_14)
 ans_lbl_5 = M5Label('', x=12,  y=180, color=C_MID,   font=FONT_MONT_14)
 ans_val_5 = M5Label('', x=160, y=180, color=C_WARM,  font=FONT_MONT_14)
-ans_hint  = M5Label('', x=6,   y=226, color=C_DIM,   font=FONT_MONT_10)
 ANS_LBL = [ans_lbl_0, ans_lbl_1, ans_lbl_2, ans_lbl_3, ans_lbl_4, ans_lbl_5]
 ANS_VAL = [ans_val_0, ans_val_1, ans_val_2, ans_val_3, ans_val_4, ans_val_5]
 
 ans_city_img = M5Img("/flash/res/default_current_weather.png", x=0, y=0)
+
+# ── Tab bar persistante (jamais effacée par hide_*) ─────────
+nav_line = M5Label('', x=0,   y=219, color=C_DIM, font=FONT_MONT_10)
+nav_a    = M5Label('', x=5,   y=228, color=C_MID, font=FONT_MONT_10)
+nav_b    = M5Label('', x=112, y=228, color=C_MID, font=FONT_MONT_10)
+nav_c    = M5Label('', x=215, y=228, color=C_MID, font=FONT_MONT_10)
+
+
+def _set_tabs(a, b, c):
+    nav_line.set_text('- - - - - - - - - - - - - - - - - - - -')
+    nav_a.set_text(a)
+    nav_b.set_text(b)
+    nav_c.set_text(c)
 
 
 def co2_style(co2):
@@ -245,35 +254,69 @@ def hide_dashboard():
     db_hm_lbl.set_text(''); db_hum.set_text('')
     db_hum_alert.set_text('')
     db_co2_lbl.set_text(''); db_co2.set_text(''); db_co2_tag.set_text('')
-    db_div.set_text('');    db_hint.set_text('')
+    db_div.set_text('')
     db_wimg.set_hidden(True)
 
 
 def hide_forecast():
-    fc_title.set_text(''); fc_hint.set_text('')
+    fc_title.set_text('')
     fc_img.set_hidden(True)
 
 
 def hide_history():
-    hist_title.set_text(''); hist_hint.set_text('')
+    hist_title.set_text('')
     hist_img.set_hidden(True)
 
 
 def hide_qa():
     qa_title.set_text(''); qa_line.set_text('')
     qa_info.set_text('');  qa_info2.set_text('')
-    qa_status.set_text(''); qa_hint.set_text('')
+    qa_status.set_text('')
 
 
 def hide_answer():
     ans_title.set_text(''); ans_question.set_text(''); ans_line.set_text('')
     for lbl in ANS_LBL: lbl.set_text('')
     for val in ANS_VAL: val.set_text('')
-    ans_hint.set_text('')
     ans_city_img.set_hidden(True)
 
 
 # ── Navigation Pages ────────────────────────────────────────
+def _go_back_from_wifi():
+    if _prev_page == "forecast":
+        show_forecast_page()
+    elif _prev_page == "history":
+        show_history_page()
+    elif _prev_page == "qa":
+        show_qa_page()
+    else:
+        show_dashboard_page()
+
+
+def show_wifi_confirm_page():
+    global current_page, _prev_page
+    _prev_page = current_page
+    current_page = "wifi_confirm"
+    screen.set_screen_bg_color(C_BG)
+    hide_dashboard(); hide_forecast(); hide_qa(); hide_answer(); hide_history()
+    wf_title.set_text('//  WiFi Setup')
+    wf_line.set_text('________________________________')
+    wf_hint.set_text('')
+    wf_net0.set_text('Connecter au WiFi ?')
+    wf_net0.set_text_color(C_WHITE)
+    wf_net1.set_text('')
+    wf_net2.set_text('')
+    if wlan.isconnected():
+        wf_status.set_text('Deja connecte')
+        wf_status.set_text_color(C_GREEN)
+    else:
+        wf_status.set_text('Non connecte')
+        wf_status.set_text_color(C_YELLOW)
+    _set_tabs('< Back', 'OK', 'Back >')
+    _update_status_bar()
+    led_set(LED_BLUE)
+
+
 def show_wifi_page():
     global current_page
     current_page = "wifi"
@@ -282,13 +325,14 @@ def show_wifi_page():
     wf_title.set_text('//  WiFi Setup')
     wf_line.set_text('________________________________')
     if wlan.isconnected():
-        wf_hint.set_text('A/C : navigate      B : back')
-        wf_status.set_text('Connected — B to go back')
+        wf_hint.set_text('Connected  —  B to go back')
         wf_status.set_text_color(C_GREEN)
+        _set_tabs('< Prev', 'Dashboard', 'Next >')
     else:
         wf_hint.set_text('A/C : navigate      B : connect')
         wf_status.set_text('Select a network')
         wf_status.set_text_color(C_YELLOW)
+        _set_tabs('< Prev', 'Connect', 'Next >')
     _update_status_bar()
     led_set(LED_BLUE)
     _render_networks()
@@ -334,7 +378,7 @@ def show_dashboard_page():
     db_co2_lbl.set_text('CO2')
     db_div.set_text('____________________________')
     db_wimg.set_hidden(True)   # shown only after successful fetch
-    db_hint.set_text('< WiFi    Q&A    Forecast >')
+    _set_tabs('WiFi', 'Q&A', 'Forecast')
     db_time.set_text(fmt_date())
     db_clock.set_text(fmt_clock())
     _update_status_bar()
@@ -348,7 +392,7 @@ def show_forecast_page():
     hide_wifi(); hide_dashboard(); hide_qa(); hide_answer(); hide_history()
     fc_title.set_text('3-DAY FORECAST')
     fc_img.set_hidden(True)    # shown only after successful fetch
-    fc_hint.set_text('< Q&A  History  WiFi >')
+    _set_tabs('Q&A', 'History', 'WiFi')
     _update_status_bar()
     led_set(LED_CYAN, 15)
     if wlan.isconnected():
@@ -364,7 +408,7 @@ def show_history_page():
     hide_wifi(); hide_dashboard(); hide_qa(); hide_answer(); hide_forecast()
     hist_title.set_text('// 24H HISTORY')
     hist_img.set_hidden(True)   # shown only after successful fetch
-    hist_hint.set_text('< Forecast  WiFi  Dashboard >')
+    _set_tabs('Forecast', 'WiFi', 'Dashboard')
     _update_status_bar()
     led_set(LED_CYAN, 15)
     if wlan.isconnected():
@@ -375,17 +419,15 @@ def show_history_page():
 
 def _fetch_history_img():
     try:
+        gc.collect()
         led_set(LED_ORANGE, 10)
         r = urequests.get(FLASK_URL + '/get-history-image?hours=24')
         if r.status_code == 200:
-            with open('/flash/res/history_data.png', 'wb') as f:
-                while True:
-                    chunk = r.raw.read(4096)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+            data = r.content
             r.close()
-            gc.collect()
+            with open('/flash/res/history_data.png', 'wb') as f:
+                f.write(data)
+            del data; gc.collect()
             hist_img.set_hidden(True)
             hist_img.set_img_src('/flash/res/history_data.png')
             hist_img.set_hidden(False)
@@ -394,7 +436,7 @@ def _fetch_history_img():
             hist_img.set_hidden(False)
         led_set(LED_CYAN, 15)
     except Exception as e:
-        print("History fetch err:", str(e))
+        print("History err:", str(e))
         hist_img.set_hidden(False)
         led_set(LED_CYAN, 15)
 
@@ -410,7 +452,7 @@ def show_qa_page():
     qa_info2.set_text('Speak clearly for 5 seconds')
     qa_status.set_text('Ready !')
     qa_status.set_text_color(C_GREEN)
-    qa_hint.set_text('< Dashboard       Forecast >')
+    _set_tabs('Dashboard', 'Record', 'Forecast')
     _update_status_bar()
     led_set(LED_CYAN, 15)
 
@@ -430,7 +472,7 @@ def show_answer_text(question, lines):
         else:
             ANS_LBL[i].set_text('')
             ANS_VAL[i].set_text('')
-    ans_hint.set_text('B: new question   A: back')
+    _set_tabs('< Back', 'New quest.', 'Back >')
     _update_status_bar()
     led_set(LED_CYAN, 15)
 
@@ -445,7 +487,7 @@ def show_answer_image(image_path):
     for val in ANS_VAL: val.set_text('')
     ans_city_img.set_img_src(image_path)
     ans_city_img.set_hidden(False)
-    ans_hint.set_text('B: new question   A: back')
+    _set_tabs('< Back', 'New quest.', 'Back >')
     _update_status_bar()
     led_set(LED_CYAN, 15)
 
@@ -511,18 +553,17 @@ def _sync_from_bigquery():
 
 def _fetch_weather_img():
     try:
+        gc.collect()
         led_set(LED_ORANGE, 10)
         r = urequests.get(
             FLASK_URL + '/get-weather-image?ip=' + (device_public_ip or '8.8.8.8'))
         if r.status_code == 200:
-            with open('/flash/res/current_weather.png', 'wb') as f:
-                while True:
-                    chunk = r.raw.read(4096)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+            data = r.content
             r.close()
-            gc.collect()
+            with open('/flash/res/current_weather.png', 'wb') as f:
+                f.write(data)
+            del data; gc.collect()
+            db_wimg.set_hidden(True)
             db_wimg.set_img_src('/flash/res/current_weather.png')
             db_wimg.set_hidden(False)
         else:
@@ -534,18 +575,17 @@ def _fetch_weather_img():
 
 def _fetch_forecast_img():
     try:
+        gc.collect()
         led_set(LED_ORANGE, 10)
         r = urequests.get(
             FLASK_URL + '/get-forecast-image?ip=' + (device_public_ip or '8.8.8.8'))
         if r.status_code == 200:
-            with open('/flash/res/forecast_weather.png', 'wb') as f:
-                while True:
-                    chunk = r.raw.read(4096)
-                    if not chunk:
-                        break
-                    f.write(chunk)
+            data = r.content
             r.close()
-            gc.collect()
+            with open('/flash/res/forecast_weather.png', 'wb') as f:
+                f.write(data)
+            del data; gc.collect()
+            fc_img.set_hidden(True)
             fc_img.set_img_src('/flash/res/forecast_weather.png')
             fc_img.set_hidden(False)
         else:
@@ -784,8 +824,10 @@ def _btn_a():
     if current_page == "wifi":
         selected_network_index = (selected_network_index - 1) % len(NETWORK_NAMES)
         _render_networks()
+    elif current_page == "wifi_confirm":
+        _go_back_from_wifi()
     elif current_page == "dashboard":
-        show_wifi_page()
+        show_wifi_confirm_page()
     elif current_page == "qa":
         show_dashboard_page()
     elif current_page == "forecast":
@@ -802,6 +844,8 @@ def _btn_b():
             show_dashboard_page()
         else:
             connect_selected()
+    elif current_page == "wifi_confirm":
+        show_wifi_page()
     elif current_page == "dashboard":
         show_qa_page()
     elif current_page == "qa":
@@ -809,7 +853,7 @@ def _btn_b():
     elif current_page == "forecast":
         show_history_page()
     elif current_page == "history":
-        show_wifi_page()
+        show_wifi_confirm_page()
     elif current_page == "answer":
         show_qa_page()
         time.sleep_ms(200)
@@ -821,12 +865,14 @@ def _btn_c():
     if current_page == "wifi":
         selected_network_index = (selected_network_index + 1) % len(NETWORK_NAMES)
         _render_networks()
+    elif current_page == "wifi_confirm":
+        _go_back_from_wifi()
     elif current_page == "dashboard":
         show_forecast_page()
     elif current_page == "qa":
         show_forecast_page()
     elif current_page == "forecast":
-        show_wifi_page()
+        show_wifi_confirm_page()
     elif current_page == "history":
         show_dashboard_page()
     elif current_page == "answer":

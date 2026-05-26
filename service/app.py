@@ -1,11 +1,6 @@
 import os
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import pandas as pd
 from flask import Flask, jsonify, request, send_file
 from bigquery_client import BigQueryClient
 from weather_client import WeatherClient
@@ -137,37 +132,31 @@ def get_weather_image():
         city      = current.get("name", "Unknown")
         wind      = current.get("wind", {}).get("speed", 0)
 
-        img  = Image.new('RGB', (320, 100), color=(8, 8, 20))
+        BG = (10, 10, 15)   # same as M5Stack screen background
+        img  = Image.new('RGB', (320, 100), color=BG)
         draw = ImageDraw.Draw(img)
 
-        # Accent bar top
+        # Top cyan accent line only — no card fill, blends with screen
         draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
 
-        # Left panel background card
-        draw.rectangle([(0, 2), (158, 100)], fill=(12, 12, 28))
-
         # City name
-        draw.text((8, 5), city[:18], fill=(0, 229, 255), font=_font(11))
+        draw.text((8, 5),  city[:18],                      fill=(0, 229, 255),   font=_font(11))
+        draw.text((8, 20), '{:.1f}°C'.format(temp),        fill=(255, 171, 0),   font=_font(28))
+        draw.text((8, 72), 'Feels {:.0f}°C'.format(feels), fill=(70, 70, 100),   font=_font(10))
+        draw.text((8, 84), desc[:22],                       fill=(160, 160, 200), font=_font(10))
 
-        # Big temperature
-        draw.text((8, 20), '{:.1f}°C'.format(temp), fill=(255, 171, 0), font=_font(28))
+        # Subtle vertical separator
+        draw.line([(158, 4), (158, 96)], fill=(22, 22, 38), width=1)
 
-        # Feels like + description
-        draw.text((8, 72), 'Feels {:.0f}°C'.format(feels), fill=(90, 90, 120), font=_font(10))
-        draw.text((8, 84), desc[:22], fill=(180, 180, 210), font=_font(10))
+        # Right side stats
+        draw.text((164, 5),  'Humidity',                   fill=(55, 75, 100),   font=_font(10))
+        draw.text((164, 18), '{}%'.format(hum),            fill=(68, 138, 255),  font=_font(16))
+        draw.text((164, 48), 'Wind',                        fill=(55, 75, 100),   font=_font(10))
+        draw.text((164, 60), '{:.1f} m/s'.format(wind),    fill=(120, 120, 160), font=_font(14))
 
-        # Divider
-        draw.line([(160, 4), (160, 96)], fill=(25, 25, 45), width=1)
-
-        # Right stats panel
-        draw.text((166, 5),  'Humidity',            fill=(70, 90, 110),  font=_font(10))
-        draw.text((166, 18), '{}%'.format(hum),     fill=(68, 138, 255), font=_font(16))
-        draw.text((166, 48), 'Wind',                fill=(70, 90, 110),  font=_font(10))
-        draw.text((166, 60), '{:.1f} m/s'.format(wind), fill=(140, 140, 170), font=_font(14))
-
-        # Weather icon (top-right corner)
+        # Weather icon
         icon = _fetch_weather_icon(icon_code, (56, 56))
-        _paste_icon(img, icon, 258, 6)
+        _paste_icon(img, icon, 258, 6, bg_color=BG)
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
@@ -179,46 +168,59 @@ def get_weather_image():
 
 @app.route('/get-forecast-image', methods=['GET'])
 def get_forecast_image():
-    """Generate a 320x130 PNG showing 3-day forecast with OWM icons."""
+    """Generate 320x120 PNG with 24h/48h/72h columns matching the placeholder design."""
     try:
         ip = request.args.get('ip', '8.8.8.8')
         location = weather_client.fetch_location_data(ip)
         lat, lon = location['loc'].split(',')
         forecast_data = weather_client.fetch_weather_data(lat, lon, current_weather=False)
 
+        # 3h slots: index 8=24h, 16=48h, 24=72h
         forecasts = [
             forecast_data['list'][8],
             forecast_data['list'][16],
             forecast_data['list'][24],
         ]
+        col_labels = ['24h', '48h', '72h']
 
-        img  = Image.new('RGB', (320, 130), color=(8, 8, 20))
+        W, H = 320, 120
+        BG   = (8, 8, 20)
+
+        img  = Image.new('RGB', (W, H), color=BG)
         draw = ImageDraw.Draw(img)
-        draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
+        draw.rectangle([(0, 0), (W, 2)], fill=(0, 229, 255))
 
-        # Fetch all 3 OWM icons in parallel — avoids sequential timeouts
+        # Fetch all 3 OWM icons in parallel
         icon_codes = [fc['weather'][0]['icon'] for fc in forecasts]
         icons = {}
         with ThreadPoolExecutor(max_workers=3) as ex:
-            futures = {ex.submit(_fetch_weather_icon, code, (40, 40)): i
+            futures = {ex.submit(_fetch_weather_icon, code, (52, 52)): i
                        for i, code in enumerate(icon_codes)}
             for fut in as_completed(futures):
                 icons[futures[fut]] = fut.result()
 
-        x_positions = [5, 110, 215]
-        for i, fc in enumerate(forecasts):
-            x    = x_positions[i]
-            date = datetime.strptime(fc['dt_txt'], '%Y-%m-%d %H:%M:%S')
+        col_w = W // 3  # 106 px per column
 
-            draw.rectangle([(x, 4), (x + 100, 126)], fill=(12, 12, 28))
-            draw.text((x + 4, 6),  date.strftime('%a %d'),                   fill=(0, 229, 255),   font=_font(11))
-            _paste_icon(img, icons.get(i), x + 28, 18)
-            draw.text((x + 4, 62), '{:.0f}°C'.format(fc['main']['temp']),    fill=(255, 171, 0),   font=_font(16))
-            draw.text((x + 4, 82), '{}%'.format(fc['main']['humidity']),      fill=(68, 138, 255),  font=_font(11))
-            draw.text((x + 4, 96), fc['weather'][0]['description'][:13],      fill=(150, 150, 180), font=_font(10))
-            draw.text((x + 4, 111), '{:.1f}m/s'.format(fc['wind']['speed']), fill=(110, 110, 140), font=_font(10))
+        for i, (fc, label) in enumerate(zip(forecasts, col_labels)):
+            x    = i * col_w
+            temp = fc['main']['temp']
+            hum  = fc['main']['humidity']
+
+            # "24h" / "48h" / "72h" in orange
+            draw.text((x + 6, 6), label, fill=(255, 171, 0), font=_font(14))
+
+            # "22°C | 45%" in dim grey-blue
+            draw.text((x + 6, 28), '{:.0f}°C | {}%'.format(temp, hum),
+                      fill=(160, 160, 200), font=_font(11))
+
+            # Icon centered horizontally in column
+            icon_x = x + (col_w - 52) // 2
+            _paste_icon(img, icons.get(i), icon_x, 48, bg_color=BG)
+
+            # Thin vertical separator
             if i < 2:
-                draw.line([(x + 103, 4), (x + 103, 126)], fill=(20, 20, 40), width=1)
+                draw.line([(x + col_w, 4), (x + col_w, H - 4)],
+                          fill=(25, 25, 45), width=1)
 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
@@ -230,111 +232,83 @@ def get_forecast_image():
 
 @app.route('/get-history-image', methods=['GET'])
 def get_history_image():
-    """Generate a 320x200 PNG with a stat header + 24h indoor sensor graph."""
+    """Generate a 320x200 PNG: 3 stat cards + 3 sparklines (Pillow only, ~8 KB)."""
     try:
         hours = int(request.args.get('hours', 24))
         rows  = bq_client.get_historical_data(hours)
 
-        BG_HEX  = '#080814'
-        BG_CARD = '#0F0F28'
+        W, H   = 320, 200
+        BG     = (8,  8,  20)
+        CARD   = (12, 12, 28)
+        ACCENT = (0, 229, 255)
+
+        img  = Image.new('RGB', (W, H), BG)
+        draw = ImageDraw.Draw(img)
+        draw.rectangle([(0, 0), (W, 2)],      fill=ACCENT)
+        draw.rectangle([(0, H-3), (W, H)],    fill=ACCENT)
 
         if not rows or len(rows) < 2:
-            img  = Image.new('RGB', (320, 200), color=(8, 8, 20))
-            draw = ImageDraw.Draw(img)
-            draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
-            draw.text((80, 95), 'No data available', fill=(100, 100, 130))
+            draw.text((60, 90), 'No history data yet', fill=(100, 100, 130), font=_font(13))
             buf = io.BytesIO()
-            img.save(buf, format='PNG')
+            img.save(buf, format='PNG', optimize=True)
             buf.seek(0)
             return send_file(buf, mimetype='image/png')
 
-        df = pd.DataFrame(rows)
-        df['measurement_time'] = pd.to_datetime(df['measurement_time'], utc=True)
-        df = df.sort_values('measurement_time')
-        times = df['measurement_time'].dt.tz_convert('Europe/Zurich')
+        temps = [float(r.get('indoor_temp',        0)) for r in rows]
+        hums  = [float(r.get('indoor_humidity',    0)) for r in rows]
+        co2s  = [float(r.get('indoor_air_quality', 0)) for r in rows]
 
-        latest_temp = df['indoor_temp'].iloc[-1]
-        latest_hum  = df['indoor_humidity'].iloc[-1]
-        latest_co2  = df['indoor_air_quality'].iloc[-1]
+        latest_co2 = co2s[-1]
+        if   latest_co2 < 600:  co2_col = (0, 230, 118)
+        elif latest_co2 < 1000: co2_col = (255, 234, 0)
+        elif latest_co2 < 2000: co2_col = (255, 171, 0)
+        else:                   co2_col = (255, 23,  68)
 
-        if   latest_co2 < 600:  co2_label, co2_color = 'EXCELLENT', '#00E676'
-        elif latest_co2 < 1000: co2_label, co2_color = 'GOOD',      '#FFEA00'
-        elif latest_co2 < 2000: co2_label, co2_color = 'POOR',      '#FFAB00'
-        else:                   co2_label, co2_color = 'DANGER',    '#FF1744'
-
-        from matplotlib.gridspec import GridSpec
-        fig = plt.figure(figsize=(3.2, 2.0), dpi=100, facecolor=BG_HEX)
-        gs  = GridSpec(2, 3, figure=fig, height_ratios=[1, 2.2], hspace=0.08,
-                       wspace=0.05, left=0.08, right=0.97, top=0.97, bottom=0.18)
-
-        # ── Stat cards (top row) ────────────────────────────────
-        stats = [
-            ('INDOOR',  '{:.1f}°C'.format(latest_temp), '#FFAB00'),
-            ('HUMIDITY', '{:.0f}%'.format(latest_hum),  '#448AFF'),
-            ('CO2',     '{:.0f}p'.format(latest_co2),   co2_color),
+        # ── Stat cards (y 3–43) ─────────────────────────────────
+        cw = W // 3
+        cards = [
+            ('INDOOR',   '{:.1f}°C'.format(temps[-1]), (255, 171, 0)),
+            ('HUMIDITY', '{:.0f}%'.format(hums[-1]),   (68, 138, 255)),
+            ('CO2',      '{:.0f}ppm'.format(co2s[-1]), co2_col),
         ]
-        for col, (label, value, color) in enumerate(stats):
-            ax = fig.add_subplot(gs[0, col])
-            ax.set_facecolor(BG_CARD)
-            ax.set_xlim(0, 1); ax.set_ylim(0, 1)
-            ax.axis('off')
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            ax.axhline(y=0.97, color=color, linewidth=2.5, xmin=0.04, xmax=0.96,
-                       solid_capstyle='round')
-            ax.text(0.5, 0.62, label,  color='#7777AA', fontsize=5.5,
-                    ha='center', va='center', transform=ax.transAxes, fontweight='bold',
-                    letterspacing=0.5)
-            ax.text(0.5, 0.22, value,  color=color, fontsize=10,
-                    ha='center', va='center', transform=ax.transAxes, fontweight='bold')
-            if label == 'CO2':
-                ax.text(0.5, -0.02, co2_label, color=co2_color, fontsize=4.5,
-                        ha='center', va='center', transform=ax.transAxes, fontweight='bold')
+        for i, (label, value, color) in enumerate(cards):
+            x0 = i * cw + 1
+            draw.rectangle([(x0, 3), (x0 + cw - 2, 43)], fill=CARD)
+            draw.rectangle([(x0, 3), (x0 + cw - 2, 5)],  fill=color)
+            draw.text((x0 + 5, 8),  label, fill=(90, 90, 130), font=_font(9))
+            draw.text((x0 + 5, 20), value, fill=color,         font=_font(14))
 
-        # ── Graph (bottom row) ──────────────────────────────────
-        ax1 = fig.add_subplot(gs[1, :])
-        ax1.set_facecolor(BG_HEX)
-        ax1.plot(times, df['indoor_temp'],     color='#FFAB00', linewidth=1.5, label='Temp °C')
-        ax1.plot(times, df['indoor_humidity'], color='#448AFF', linewidth=1.5, label='Hum %')
-        ax1.tick_params(colors='#7777AA', labelsize=5.5)
-        for spine in ax1.spines.values():
-            spine.set_color('#1A1A30')
-        ax1.spines['top'].set_visible(False)
-        ax1.yaxis.set_tick_params(labelsize=5.5)
+        # ── Sparkline helper ────────────────────────────────────
+        LPAD = 28
+        CW   = W - LPAD - 4
 
-        ax2 = ax1.twinx()
-        ax2.plot(times, df['indoor_air_quality'], color=co2_color, linewidth=1.2,
-                 linestyle='--', label='CO₂ ppm', alpha=0.8)
-        ax2.tick_params(colors=co2_color, labelsize=5.5)
-        ax2.spines['right'].set_color(co2_color)
-        for s in ['top', 'bottom', 'left']:
-            ax2.spines[s].set_color('#1A1A30')
+        def sparkline(values, y0, ch, color, row_label):
+            draw.rectangle([(LPAD, y0), (LPAD + CW, y0 + ch)], fill=CARD)
+            vmin, vmax = min(values), max(values)
+            span = max(vmax - vmin, 0.01)
+            n    = len(values)
+            pts  = []
+            for idx, v in enumerate(values):
+                x = LPAD + int(idx * CW / (n - 1))
+                y = y0 + ch - 2 - int((v - vmin) / span * (ch - 4))
+                pts.append((x, y))
+            if len(pts) > 1:
+                draw.line(pts, fill=color, width=2)
+            if pts:
+                lx, ly = pts[-1]
+                draw.ellipse([lx-3, ly-3, lx+3, ly+3], fill=color)
+            draw.text((0, y0),          '{:.0f}'.format(vmax), fill=color, font=_font(8))
+            draw.text((0, y0+ch-9),     '{:.0f}'.format(vmin), fill=color, font=_font(8))
+            draw.text((LPAD+2, y0+1),   row_label,             fill=color, font=_font(8))
 
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-        ax1.xaxis.set_major_locator(mdates.HourLocator(interval=4))
-        ax1.tick_params(axis='x', rotation=30, labelsize=5.5)
-        ax1.grid(axis='y', color='#1A1A30', linewidth=0.5)
-
-        lines1, lbl1 = ax1.get_legend_handles_labels()
-        lines2, lbl2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, lbl1 + lbl2, loc='upper right', fontsize=4.5,
-                   facecolor='#0A0A1A', edgecolor='#333344', labelcolor='white',
-                   framealpha=0.85)
+        sparkline(temps, 48,  40, (255, 171, 0),  '°C')
+        sparkline(hums,  93,  40, (68, 138, 255), 'H%')
+        sparkline(co2s,  138, 40, co2_col,        'CO2')
 
         buf = io.BytesIO()
-        fig.savefig(buf, format='PNG', dpi=100, facecolor=BG_HEX)
-        plt.close(fig)
+        img.save(buf, format='PNG', optimize=True)
         buf.seek(0)
-
-        result_img = Image.open(buf).convert('RGB')
-        draw = ImageDraw.Draw(result_img)
-        draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
-        draw.rectangle([(0, 197), (320, 200)], fill=(0, 229, 255))
-
-        final_buf = io.BytesIO()
-        result_img.save(final_buf, format='PNG')
-        final_buf.seek(0)
-        return send_file(final_buf, mimetype='image/png')
+        return send_file(buf, mimetype='image/png')
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -467,7 +441,45 @@ def ask_question():
         local_city = location_data.get('city', 'your location')
         current_weather = weather_client.fetch_weather_data(lat, lon, current_weather=True)
         forecast_data   = weather_client.fetch_weather_data(lat, lon, current_weather=False)
-        next_days = forecast_data['list'][:8]
+
+        # Build 5-day daily forecast summary (more useful than raw 3h entries)
+        daily = {}
+        for entry in forecast_data['list']:
+            day = entry['dt_txt'][:10]
+            if day not in daily:
+                daily[day] = {'temps': [], 'conds': [], 'wind': []}
+            daily[day]['temps'].append(entry['main']['temp'])
+            daily[day]['conds'].append(entry['weather'][0]['description'])
+            daily[day]['wind'].append(entry['wind']['speed'])
+        forecast_lines = []
+        for day, d in sorted(daily.items())[:5]:
+            mid_cond = d['conds'][len(d['conds']) // 2]
+            forecast_lines.append(
+                '{}: avg {:.0f}C (min {:.0f} max {:.0f}), {}, wind {:.1f}m/s'.format(
+                    day,
+                    sum(d['temps']) / len(d['temps']),
+                    min(d['temps']), max(d['temps']),
+                    mid_cond,
+                    sum(d['wind']) / len(d['wind'])
+                )
+            )
+        forecast_5d = '\n'.join(forecast_lines)
+
+        # Last 48h indoor history for "yesterday" indoor questions
+        history_rows = bq_client.get_historical_data(hours=48)
+        if history_rows:
+            indoor_history = 'Last 48h indoor (newest last):\n' + '\n'.join(
+                '  {}: {:.1f}C, {:.0f}% hum, {:.0f}ppm CO2'.format(
+                    str(r.get('measurement_time', ''))[:16],
+                    float(r.get('indoor_temp', 0)),
+                    float(r.get('indoor_humidity', 0)),
+                    float(r.get('indoor_air_quality', 0))
+                )
+                for r in history_rows[-8:]
+            )
+        else:
+            indoor_history = 'No indoor history available'
+
         latest_indoor = bq_client.get_latest_sensor_data()
  
         # 4. Si ville detectee, recuperer sa meteo aussi
@@ -485,11 +497,12 @@ def ask_question():
             context = (
                 "Local city: {}\n"
                 "Current outdoor weather: {}\n"
-                "Next 24h forecast: {}\n"
+                "5-day forecast:\n{}\n"
+                "Indoor history (48h):\n{}\n"
                 "Latest indoor sensors: {}{}\n"
                 "User question: {}"
-            ).format(local_city, current_weather, next_days,
-                     latest_indoor, extra_city_context, question)
+            ).format(local_city, current_weather, forecast_5d,
+                     indoor_history, latest_indoor, extra_city_context, question)
  
             SYSTEM_INSTRUCTION = (
                 "You are a smart home weather assistant. "
@@ -526,14 +539,16 @@ def ask_question():
             'User question: "{}"\n'
             'Local city: {}\n'
             'Outdoor weather: {}\n'
-            'Next 24h forecast: {}\n'
+            '5-day forecast:\n{}\n'
+            'Indoor history (48h):\n{}\n'
             'Indoor sensors: {}\n\n'
             'Answer the question using the data above. '
             'Reply ONLY with a JSON array of 3 to 6 [label, value] pairs. '
             'Labels are short (max 12 chars), values are short (max 18 chars). '
             'Example: [["Topic","Indoor temp"],["Now","22.3 C"],["Trend","Stable"]]. '
             'No markdown, no comments, no code fences, just the JSON array.'
-        ).format(question, local_city, current_weather, next_days, latest_indoor)
+        ).format(question, local_city, current_weather, forecast_5d,
+                 indoor_history, latest_indoor)
  
         SYSTEM_INSTRUCTION = (
             "You return ONLY a JSON array of [label,value] pairs in English. "
