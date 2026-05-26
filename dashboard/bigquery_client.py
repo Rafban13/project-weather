@@ -39,7 +39,7 @@ def get_historical_data(hours: int = 24):
     """
     df = client.query(query).to_dataframe()
     if not df.empty:
-        df["measurement_time"] = pd.to_datetime(df["measurement_time"])
+        df["measurement_time"] = pd.to_datetime(df["measurement_time"], utc=True).dt.tz_convert('Europe/Zurich')
     return df
 
 

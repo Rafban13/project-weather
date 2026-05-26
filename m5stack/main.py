@@ -5,6 +5,7 @@
 from m5stack_ui import M5Screen, M5Label, M5Img, FONT_MONT_10, FONT_MONT_14, FONT_MONT_34
 from m5stack import btnA, btnB, btnC, speaker
 from m5stack import rgb
+_bat_module = None
 try:
     from m5stack import axp as _bat_module
 except Exception:
@@ -61,8 +62,7 @@ _weather_slot          = 0
 _forecast_slot         = 0
 _history_slot          = 0
 
-# Variable pour suivre l'activation du micro
-mic_initialized        = False 
+mic_initialized        = False
 
 C_BG      = 0x0A0A0F
 C_ACCENT  = 0x00E5FF
@@ -115,8 +115,6 @@ db_temp      = M5Label('', x=6,   y=32,  color=C_WARM,  font=FONT_MONT_34)
 db_hm_lbl    = M5Label('', x=172, y=20,  color=C_MID,   font=FONT_MONT_10)
 db_hum       = M5Label('', x=168, y=32,  color=C_COOL,  font=FONT_MONT_34)
 db_hum_alert = M5Label('', x=168, y=78,  color=C_RED,    font=FONT_MONT_10)
-db_out_lbl   = M5Label('', x=6,   y=78,  color=C_MID,   font=FONT_MONT_10)
-db_out       = M5Label('', x=6,   y=92,  color=C_ACCENT, font=FONT_MONT_14)
 db_co2_lbl   = M5Label('', x=172, y=90,  color=C_MID,   font=FONT_MONT_10)
 db_co2       = M5Label('', x=168, y=102, color=C_GREEN, font=FONT_MONT_14)
 db_co2_tag   = M5Label('', x=168, y=118, color=C_GREEN, font=FONT_MONT_10)
@@ -233,7 +231,13 @@ def _get_battery():
         return -1, False
     try:
         v = _bat_module.getBatVoltage()
-        level = max(0, min(100, (v - 3300) * 100 // 900))
+        if v > 100:
+            mv = v           # already millivolts (e.g. 3800)
+        elif v > 1:
+            mv = v * 1000    # volts → millivolts (e.g. 3.8 → 3800)
+        else:
+            return -1, False
+        level = max(0, min(100, int((mv - 3300) * 100 // 900)))
         charging = False
         try: charging = bool(_bat_module.isCharging())
         except: pass
@@ -262,7 +266,6 @@ def hide_dashboard():
     db_in_lbl.set_text(''); db_temp.set_text('')
     db_hm_lbl.set_text(''); db_hum.set_text('')
     db_hum_alert.set_text('')
-    db_out_lbl.set_text(''); db_out.set_text('')
     db_co2_lbl.set_text(''); db_co2.set_text(''); db_co2_tag.set_text('')
     db_div.set_text('')
     db_wimg.set_hidden(True)
@@ -309,18 +312,18 @@ def show_wifi_confirm_page():
     current_page = "wifi_confirm"
     screen.set_screen_bg_color(C_BG)
     hide_dashboard(); hide_forecast(); hide_qa(); hide_answer(); hide_history()
-    wf_title.set_text('//  WiFi Setup')
+    wf_title.set_text('WiFi Setup')
     wf_line.set_text('________________________________')
     wf_hint.set_text('')
-    wf_net0.set_text('Connecter au WiFi ?')
+    wf_net0.set_text('Connect to WiFi ?')
     wf_net0.set_text_color(C_WHITE)
     wf_net1.set_text('')
     wf_net2.set_text('')
     if wlan.isconnected():
-        wf_status.set_text('Deja connecte')
+        wf_status.set_text('Already connected')
         wf_status.set_text_color(C_GREEN)
     else:
-        wf_status.set_text('Non connecte')
+        wf_status.set_text('Not connected')
         wf_status.set_text_color(C_YELLOW)
     _set_tabs('< Back', 'OK', 'Back >')
     _update_status_bar()
@@ -333,7 +336,7 @@ def show_wifi_page():
     current_page = "wifi"
     screen.set_screen_bg_color(0x08080F)
     hide_dashboard(); hide_forecast(); hide_qa(); hide_answer(); hide_history()
-    wf_title.set_text('//  WiFi Setup')
+    wf_title.set_text('WiFi Setup')
     wf_line.set_text('________________________________')
     wf_hint.set_text('')
     wf_status.set_text('')
@@ -380,11 +383,10 @@ def show_dashboard_page():
     current_page = "dashboard"
     screen.set_screen_bg_color(C_BG)
     hide_wifi(); hide_forecast(); hide_qa(); hide_answer(); hide_history()
-    db_in_lbl.set_text('IN TEMP')
-    db_hm_lbl.set_text('IN HUM')
-    db_out_lbl.set_text('OUTDOOR')
-    db_co2_lbl.set_text('CO2')
-    db_div.set_text('- - - - - - - - - - - - - -')
+    db_in_lbl.set_text('INDOOR')
+    db_hm_lbl.set_text('HUMIDITY')
+    db_co2_lbl.set_text('AIR CO2')
+    db_div.set_text('____________________________')
     db_wimg.set_hidden(True)   # shown only after successful fetch
     _set_tabs('WiFi', 'History', 'Forecast')
     db_time.set_text(fmt_date())
@@ -414,7 +416,7 @@ def show_history_page():
     current_page = "history"
     screen.set_screen_bg_color(C_BG)
     hide_wifi(); hide_dashboard(); hide_qa(); hide_answer(); hide_forecast()
-    hist_title.set_text('// 24H HISTORY')
+    hist_title.set_text('24H HISTORY')
     hist_img.set_hidden(True)   # shown only after successful fetch
     _set_tabs('Forecast', 'Dashboard', 'Q&A')
     _update_status_bar()
@@ -455,7 +457,7 @@ def show_qa_page():
     current_page = "qa"
     screen.set_screen_bg_color(C_BG)
     hide_wifi(); hide_dashboard(); hide_forecast(); hide_answer(); hide_history()
-    qa_title.set_text('//  Ask Me')
+    qa_title.set_text('Ask Me')
     qa_line.set_text('________________________________')
     if wlan.isconnected():
         qa_info.set_text('Press B to record')
@@ -477,7 +479,7 @@ def show_answer_text(question, lines):
     current_page = "answer"
     screen.set_screen_bg_color(C_BG)
     hide_wifi(); hide_dashboard(); hide_forecast(); hide_qa()
-    ans_title.set_text('//  Answer')
+    ans_title.set_text('Answer')
     ans_question.set_text(question[:48])
     ans_line.set_text('________________________________')
     for i in range(6):
@@ -530,7 +532,7 @@ def _scan_and_show_wifi():
     if not scanned_networks:
         scanned_networks = list(KNOWN_NETWORKS.keys())
     n = len(scanned_networks)
-    wf_hint.set_text('{} reseau{} trouve{}'.format(n, 's' if n > 1 else '', 's' if n > 1 else ''))
+    wf_hint.set_text('{} network{} found'.format(n, 's' if n > 1 else ''))
     wf_hint.set_text_color(C_MID)
     _render_networks()
 
@@ -787,7 +789,6 @@ def _ask_question():
             except Exception as e:
                 print("[STEP 5] MIC.{}({}) failed: {}".format(_fn, _args, str(e)))
         # mic_initialized reste True si aucune méthode n'a fonctionné — speaker bloqué pour éviter le crash I2S
-        time.sleep_ms(500)
         gc.collect()
 
         led_set(LED_ORANGE)
@@ -960,7 +961,6 @@ def _btn_b():
         show_dashboard_page()         # B = retour Dashboard depuis History
     elif current_page == "answer":
         show_qa_page()
-        time.sleep_ms(200)
         _ask_question()
 
 
@@ -1013,7 +1013,7 @@ if wlan.isconnected():
 
 
 # ── Boucle principale ───────────────────────────────────────
-data_last_sent       = time.time() - 250
+data_last_sent       = time.time() - 55
 weather_last_checked = time.time() - 30
 time_last_updated    = time.time() - 55
 
@@ -1027,8 +1027,6 @@ while True:
             db_temp.set_text('{:.1f}'.format(temp))
             db_hum.set_text('{:.0f}%'.format(hum))
             _check_humidity_alert(hum)
-            db_out.set_text('{:.1f}'.format(last_outdoor_temp) if last_outdoor_temp else '--')
-
             co2_color, co2_tag = co2_style(co2)
             db_co2.set_text('{}ppm'.format(co2))
             db_co2.set_text_color(co2_color)
@@ -1047,7 +1045,7 @@ while True:
             if wlan.isconnected():
                 if pir.state == 1:
                     _play_weather_tts()
-                if now - data_last_sent >= 300:
+                if now - data_last_sent >= 60:
                     _send_data(temp, hum, co2)
                     data_last_sent = now
                 if now - weather_last_checked >= 30:

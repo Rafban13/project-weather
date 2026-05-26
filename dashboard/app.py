@@ -363,19 +363,19 @@ def make_line_chart(df, y_col, color, title, unit):
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=15)
 def load_latest(): return bq.get_latest_reading()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=15)
 def load_history(hours): return bq.get_historical_data(hours)
 
 @st.cache_data(ttl=300)
 def load_daily_stats(): return bq.get_daily_stats(days=7)
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=300)
 def load_weather(): return weather.get_current_weather()
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)
 def load_forecast(): return weather.get_forecast()
 
 
@@ -399,7 +399,7 @@ with col_time:
     """, unsafe_allow_html=True)
 
 # ── History period — resolved from session state (buttons rendered below near charts) ──
-hours_options = {"6h": 6, "12h": 12, "24h": 24, "48h": 48, "7 days": 168}
+hours_options = {"2h": 2, "6h": 6, "12h": 12, "24h": 24, "48h": 48, "7 days": 168}
 
 if "selected_hours_label" not in st.session_state:
     st.session_state.selected_hours_label = "24h"
@@ -457,7 +457,7 @@ if latest is not None:
             <div class="metric-sub">{latest['indoor_air_quality']:.0f} ppm CO₂</div>
         </div>""", unsafe_allow_html=True)
     with c4:
-        ts = pd.to_datetime(latest["measurement_time"]).strftime("%H:%M")
+        ts = pd.to_datetime(latest["measurement_time"], utc=True).tz_convert('Europe/Zurich').strftime("%H:%M")
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">🕐 Last Updated</div>
