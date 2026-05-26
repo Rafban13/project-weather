@@ -132,24 +132,29 @@ def get_weather_image():
         city      = current.get("name", "Unknown")
         wind      = current.get("wind", {}).get("speed", 0)
 
-        BG = (10, 10, 15)
+        BG = (10, 10, 15)   # same as M5Stack screen background
         img  = Image.new('RGB', (320, 100), color=BG)
         draw = ImageDraw.Draw(img)
 
+        # Top cyan accent line only — no card fill, blends with screen
         draw.rectangle([(0, 0), (320, 2)], fill=(0, 229, 255))
 
+        # City name
         draw.text((8, 5),  city[:18],                      fill=(0, 229, 255),   font=_font(11))
         draw.text((8, 20), '{:.1f}°C'.format(temp),        fill=(255, 171, 0),   font=_font(28))
         draw.text((8, 72), 'Feels {:.0f}°C'.format(feels), fill=(70, 70, 100),   font=_font(10))
         draw.text((8, 84), desc[:22],                       fill=(160, 160, 200), font=_font(10))
 
+        # Subtle vertical separator
         draw.line([(158, 4), (158, 96)], fill=(22, 22, 38), width=1)
 
+        # Right side stats
         draw.text((164, 5),  'Humidity',                   fill=(55, 75, 100),   font=_font(10))
         draw.text((164, 18), '{}%'.format(hum),            fill=(68, 138, 255),  font=_font(16))
         draw.text((164, 48), 'Wind',                        fill=(55, 75, 100),   font=_font(10))
         draw.text((164, 60), '{:.1f} m/s'.format(wind),    fill=(120, 120, 160), font=_font(14))
 
+        # Weather icon
         icon = _fetch_weather_icon(icon_code, (56, 56))
         _paste_icon(img, icon, 258, 6, bg_color=BG)
 
@@ -163,41 +168,20 @@ def get_weather_image():
 
 @app.route('/get-forecast-image', methods=['GET'])
 def get_forecast_image():
-    """Generate 320x120 PNG with next 3 days forecast (real day names)."""
+    """Generate 320x120 PNG with 24h/48h/72h columns matching the placeholder design."""
     try:
         ip = request.args.get('ip', '8.8.8.8')
         location = weather_client.fetch_location_data(ip)
         lat, lon = location['loc'].split(',')
         forecast_data = weather_client.fetch_weather_data(lat, lon, current_weather=False)
 
-        # Group by day, prefer noon reading
-        daily = {}
-        for entry in forecast_data['list']:
-            day  = entry['dt_txt'][:10]
-            hour = entry['dt_txt'][11:13]
-            if day not in daily or hour == '12':
-                daily[day] = entry
-
-        # Skip today, take next 3 days
-        today = datetime.utcnow().strftime('%Y-%m-%d')
-        future_days = [d for d in sorted(daily.keys()) if d > today][:3]
-
-        # Fallback to fixed indices if not enough days
-        if len(future_days) < 3:
-            forecasts  = [forecast_data['list'][8],
-                          forecast_data['list'][16],
-                          forecast_data['list'][24]]
-            col_labels = ['24h', '48h', '72h']
-        else:
-            forecasts  = [daily[d] for d in future_days]
-            days_en    = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-            col_labels = [
-                '{} {}'.format(
-                    days_en[datetime.strptime(d, '%Y-%m-%d').weekday()],
-                    datetime.strptime(d, '%Y-%m-%d').day
-                )
-                for d in future_days
-            ]
+        # 3h slots: index 8=24h, 16=48h, 24=72h
+        forecasts = [
+            forecast_data['list'][8],
+            forecast_data['list'][16],
+            forecast_data['list'][24],
+        ]
+        col_labels = ['24h', '48h', '72h']
 
         W, H = 320, 120
         BG   = (8, 8, 20)
@@ -215,20 +199,25 @@ def get_forecast_image():
             for fut in as_completed(futures):
                 icons[futures[fut]] = fut.result()
 
-        col_w = W // 3
+        col_w = W // 3  # 106 px per column
 
         for i, (fc, label) in enumerate(zip(forecasts, col_labels)):
             x    = i * col_w
             temp = fc['main']['temp']
             hum  = fc['main']['humidity']
 
+            # "24h" / "48h" / "72h" in orange
             draw.text((x + 6, 6), label, fill=(255, 171, 0), font=_font(14))
+
+            # "22°C | 45%" in dim grey-blue
             draw.text((x + 6, 28), '{:.0f}°C | {}%'.format(temp, hum),
                       fill=(160, 160, 200), font=_font(11))
 
+            # Icon centered horizontally in column
             icon_x = x + (col_w - 52) // 2
             _paste_icon(img, icons.get(i), icon_x, 48, bg_color=BG)
 
+            # Thin vertical separator
             if i < 2:
                 draw.line([(x + col_w, 4), (x + col_w, H - 4)],
                           fill=(25, 25, 45), width=1)
@@ -275,6 +264,7 @@ def get_history_image():
         elif latest_co2 < 2000: co2_col = (255, 171, 0)
         else:                   co2_col = (255, 23,  68)
 
+        # ── Stat cards (y 3–43) ─────────────────────────────────
         cw = W // 3
         cards = [
             ('INDOOR',   '{:.1f}°C'.format(temps[-1]), (255, 171, 0)),
@@ -288,6 +278,7 @@ def get_history_image():
             draw.text((x0 + 5, 8),  label, fill=(90, 90, 130), font=_font(9))
             draw.text((x0 + 5, 20), value, fill=color,         font=_font(14))
 
+        # ── Sparkline helper ────────────────────────────────────
         LPAD = 28
         CW   = W - LPAD - 4
 
@@ -369,6 +360,7 @@ def _get_weather_for_city(city_name: str) -> dict:
     try:
         url = (f"https://api.openweathermap.org/data/2.5/weather"
                f"?q={city_name}&appid={weather_client.openweathermap_api_key}&units=metric")
+        import requests
         response = requests.get(url)
         if response.status_code == 200:
             return response.json()
@@ -381,6 +373,7 @@ def _get_forecast_for_city(city_name: str) -> dict:
     try:
         url = (f"https://api.openweathermap.org/data/2.5/forecast"
                f"?q={city_name}&appid={weather_client.openweathermap_api_key}&units=metric")
+        import requests
         response = requests.get(url)
         if response.status_code == 200:
             return response.json()
@@ -389,12 +382,13 @@ def _get_forecast_for_city(city_name: str) -> dict:
         return {}
 
 
+
 @app.route('/ask-question', methods=['POST'])
 def ask_question():
     """
     Recoit un WAV depuis un client (M5Stack ou Streamlit), transcrit
     avec Speech-to-Text, et repond selon le format demande.
-
+ 
     Parametre optionnel : ?text_only=true
       - Si oui (utilise par le dashboard Streamlit) :
         Renvoie {"answer": "...", "question": "..."}
@@ -406,10 +400,10 @@ def ask_question():
         audio_bytes = request.data
         if not audio_bytes:
             return jsonify({"error": "No audio data received"}), 400
-
+ 
         ip = request.args.get('ip', '8.8.8.8')
         text_only = request.args.get('text_only', 'false').lower() == 'true'
-
+ 
         # 1. Speech-to-Text
         question = speech_to_text_client.transcribe_audio(audio_bytes)
         if not question:
@@ -417,12 +411,12 @@ def ask_question():
             if text_only:
                 return jsonify({"answer": sorry, "question": ""}), 200
             return jsonify({
-                "type": "text",
-                "transcription": "(could not understand)",
-                "lines": [["Status", "Please retry"],
-                          ["Tip", "Speak louder"]]
+                "type":"text",
+                "transcription":"(could not understand)",
+                "lines":[["Status","Please retry"],
+                         ["Tip","Speak louder"]]
             }), 200
-
+ 
         # 2. Detection ville mentionnee
         city_extract_prompt = (
             'Extract the city name from this question (in any language). '
@@ -435,12 +429,12 @@ def ask_question():
             '"temperature outside" -> none, '
             '"quelle humidite interieure" -> none.'
         ).format(question)
-
+ 
         extracted_city = vertex_ai_client.get_weather_description(
             city_extract_prompt,
             "You extract city names. Reply with ONLY the city name or 'none'."
         ).strip()
-
+ 
         # 3. Recuperer le contexte meteo + indoor
         location_data = weather_client.fetch_location_data(ip)
         lat, lon = location_data['loc'].split(',')
@@ -448,7 +442,7 @@ def ask_question():
         current_weather = weather_client.fetch_weather_data(lat, lon, current_weather=True)
         forecast_data   = weather_client.fetch_weather_data(lat, lon, current_weather=False)
 
-        # Build 5-day daily forecast summary
+        # Build 5-day daily forecast summary (more useful than raw 3h entries)
         daily = {}
         for entry in forecast_data['list']:
             day = entry['dt_txt'][:10]
@@ -471,7 +465,7 @@ def ask_question():
             )
         forecast_5d = '\n'.join(forecast_lines)
 
-        # Last 48h indoor history
+        # Last 48h indoor history for "yesterday" indoor questions
         history_rows = bq_client.get_historical_data(hours=48)
         if history_rows:
             indoor_history = 'Last 48h indoor (newest last):\n' + '\n'.join(
@@ -487,7 +481,7 @@ def ask_question():
             indoor_history = 'No indoor history available'
 
         latest_indoor = bq_client.get_latest_sensor_data()
-
+ 
         # 4. Si ville detectee, recuperer sa meteo aussi
         extra_city_context = ""
         city_is_valid = False
@@ -497,7 +491,7 @@ def ask_question():
                 city_is_valid = True
                 extra_city_context = "\nWeather for {}: {}".format(
                     extracted_city, city_weather)
-
+ 
         # ── BRANCHE STREAMLIT : reponse texte naturelle ──────
         if text_only:
             context = (
@@ -509,37 +503,38 @@ def ask_question():
                 "User question: {}"
             ).format(local_city, current_weather, forecast_5d,
                      indoor_history, latest_indoor, extra_city_context, question)
-
+ 
             SYSTEM_INSTRUCTION = (
                 "You are a smart home weather assistant. "
                 "Answer the user's question based on the provided data. "
                 "Be concise (max 80 words), friendly, helpful. "
                 "No emojis, no special characters. Always reply in English."
             )
-
-            answer = vertex_ai_client.get_weather_description(context, SYSTEM_INSTRUCTION)
+ 
+            answer = vertex_ai_client.get_weather_description(
+                context, SYSTEM_INSTRUCTION)
             return jsonify({"answer": answer, "question": question}), 200
-
-        # ── BRANCHE M5STACK : reponse structuree ──────────────
-
-        # 5a. Si ville valide detectee
+ 
+        # ── BRANCHE M5STACK : reponse structuree (image ou tableau) ──
+ 
+        # 5a. Si ville valide detectee, on dit au M5Stack de demander l'image
         if city_is_valid:
             return jsonify({
-                "type": "image",
+                "type":"image",
                 "transcription": question,
                 "city": extracted_city
             }), 200
-
-        # 5b. Si ville mentionnee mais introuvable
+ 
+        # 5b. Si ville mentionnee mais introuvable, fallback texte
         if extracted_city and extracted_city.lower() != "none":
             return jsonify({
-                "type": "text",
+                "type":"text",
                 "transcription": question,
-                "lines": [["City", extracted_city[:18]],
-                          ["Status", "Not found"]]
+                "lines":[["City", extracted_city[:18]],
+                         ["Status", "Not found"]]
             }), 200
-
-        # 5c. Question generale : reponse tabulaire via Gemini
+ 
+        # 5c. Question generale : reponse tabulaire via Gemini en JSON
         structured_prompt = (
             'User question: "{}"\n'
             'Local city: {}\n'
@@ -554,24 +549,25 @@ def ask_question():
             'No markdown, no comments, no code fences, just the JSON array.'
         ).format(question, local_city, current_weather, forecast_5d,
                  indoor_history, latest_indoor)
-
+ 
         SYSTEM_INSTRUCTION = (
             "You return ONLY a JSON array of [label,value] pairs in English. "
             "Labels and values must be in English, regardless of the question language. "
             "No prose, no markdown fences, just the raw JSON array."
         )
-
+ 
         raw_answer = vertex_ai_client.get_weather_description(
             structured_prompt, SYSTEM_INSTRUCTION
         )
-
+ 
+        # Nettoyer la reponse Gemini (peut contenir des backticks markdown)
         cleaned = raw_answer.strip()
         if cleaned.startswith('```'):
             cleaned = cleaned.split('```')[1]
             if cleaned.startswith('json'):
                 cleaned = cleaned[4:]
         cleaned = cleaned.strip()
-
+ 
         try:
             import json as _json
             lines = _json.loads(cleaned)
@@ -583,23 +579,22 @@ def ask_question():
                 lines = [["Answer", "No data"]]
         except Exception:
             lines = [["Answer", cleaned[:18] if cleaned else "No data"]]
-
+ 
         return jsonify({
-            "type": "text",
+            "type":"text",
             "transcription": question,
             "lines": lines[:6]
         }), 200
-
+ 
     except Exception as e:
         if request.args.get('text_only', 'false').lower() == 'true':
             return jsonify({"answer": "Error: " + str(e)[:60],
                             "question": ""}), 200
         return jsonify({
-            "type": "text",
-            "transcription": "(error)",
-            "lines": [["Error", str(e)[:18]]]
+            "type":"text",
+            "transcription":"(error)",
+            "lines":[["Error", str(e)[:18]]]
         }), 200
-
 
 @app.route('/get-weather-image-large', methods=['GET'])
 def get_weather_image_large():
@@ -610,18 +605,19 @@ def get_weather_image_large():
     try:
         city = request.args.get('city', 'Lausanne')
         weather_data = _get_weather_for_city(city)
-
+ 
         if not weather_data or not weather_data.get('main'):
+            # Image d'erreur si la ville n'est pas trouvee
             img = Image.new('RGB', (320, 240), color=(10, 10, 15))
             draw = ImageDraw.Draw(img)
             draw.rectangle([(0, 0), (320, 3)], fill=(255, 23, 68))
-            draw.text((20, 100), "City not found:", fill=(255, 200, 200), font=_font(13))
-            draw.text((20, 120), city[:20],         fill=(255, 255, 255), font=_font(13))
+            draw.text((20, 100), "City not found:", fill=(255, 200, 200))
+            draw.text((20, 120), city[:20], fill=(255, 255, 255))
             buf = io.BytesIO()
             img.save(buf, format='PNG')
             buf.seek(0)
             return send_file(buf, mimetype='image/png')
-
+ 
         temp  = weather_data["main"]["temp"]
         feels = weather_data["main"]["feels_like"]
         hum   = weather_data["main"]["humidity"]
@@ -629,13 +625,14 @@ def get_weather_image_large():
         desc  = weather_data["weather"][0]["description"].title()
         wind  = weather_data.get("wind", {}).get("speed", 0)
         name  = weather_data.get("name", city)
-
+ 
         img  = Image.new('RGB', (320, 240), color=(8, 8, 20))
         draw = ImageDraw.Draw(img)
 
         draw.rectangle([(0, 0),   (320, 3)],   fill=(0, 229, 255))
         draw.rectangle([(0, 237), (320, 240)],  fill=(0, 229, 255))
 
+        # Icon top-right
         icon_code = weather_data["weather"][0]["icon"]
         icon = _fetch_weather_icon(icon_code, (72, 72))
         _paste_icon(img, icon, 234, 16, bg_color=(8, 8, 20))
@@ -660,42 +657,15 @@ def get_weather_image_large():
 
         now_utc = datetime.utcnow().strftime('%H:%M UTC')
         draw.text((14, 210), 'Updated ' + now_utc, fill=(60, 60, 90), font=_font(10))
-
+ 
         buf = io.BytesIO()
         img.save(buf, format='PNG')
         buf.seek(0)
         return send_file(buf, mimetype='image/png')
-
+ 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-# ─────────────────────────────────────────────────────────────
-#  PENDING ANSWER — Device 2 picks up answers from Device 1
-# ─────────────────────────────────────────────────────────────
-
-import time as _time
-pending_answer = {'path': None, 'timestamp': 0}
-
-@app.route('/get-answer', methods=['GET'])
-def get_answer():
-    """Device 2 polls this to get the latest answer WAV. Returns 204 if nothing pending."""
-    global pending_answer
-    try:
-        if not pending_answer['path']:
-            return '', 204
-        if _time.time() - pending_answer['timestamp'] > 30:
-            pending_answer = {'path': None, 'timestamp': 0}
-            return '', 204
-        path = pending_answer['path']
-        if not os.path.exists(path):
-            pending_answer = {'path': None, 'timestamp': 0}
-            return '', 204
-        pending_answer = {'path': None, 'timestamp': 0}
-        return send_file(path, mimetype='audio/wav')
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+    
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=True)
