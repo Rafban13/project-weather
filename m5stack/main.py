@@ -446,8 +446,7 @@ def _fetch_history_img():
             r.close()
             hist_img.set_hidden(False)
         led_set(LED_CYAN, 15)
-    except Exception as e:
-        print("History err:", str(e))
+    except Exception:
         hist_img.set_hidden(False)
         led_set(LED_CYAN, 15)
 
@@ -741,9 +740,6 @@ def _play_weather_tts():
 def _ask_question():
     global is_recording, mic_initialized
 
-    print("=== _ask_question CALLED ===")
-    print("RAM dispo au debut:", gc.mem_free())
-
     if not wlan.isconnected():
         led_set(LED_RED)
         time.sleep(2)
@@ -754,40 +750,31 @@ def _ask_question():
         is_recording = True
 
         # Countdown 2s, LED orange
-        print("[STEP 1] Countdown")
         led_set(LED_ORANGE)
         time.sleep(2)
 
-        # Enregistrement 5s, LED violette
-        print("[STEP 2] LED purple, gc.collect")
+        # Recording 5s, LED purple
         led_set(LED_PURPLE)
         gc.collect()
-        print("[STEP 3] RAM apres gc:", gc.mem_free())
 
-        # --- LE MICRO S'ACTIVE SEULEMENT ICI À LA PREMIÈRE QUESTION ---
         if not mic_initialized:
-            print("[STEP 4] Initialisation unique du microphone permanent")
             MIC.begin(pin_ws=0, pin_data=34, sample_rate_hz=16000,
                       buffer_length_ms=1000, block_length_ms=100)
             mic_initialized = True
-        else:
-            print("[STEP 4] Reutilisation du microphone permanent")
 
         f_mic = open('/flash/question.wav', 'wb')
         MIC.recordStart(f_mic, 5000)
         MIC.waitRecordDone(7000)
         f_mic.close()
 
-        # Libérer le bus I2S pour permettre au speaker de fonctionner après
-        print("[STEP 5] Deinit microphone pour libérer I2S")
+        # Release I2S bus so speaker can work after recording
         for _fn, _args in [('deinit', (0,)), ('end', ()), ('stop', ())]:
             try:
                 getattr(MIC, _fn)(*_args)
                 mic_initialized = False
-                print("[STEP 5] MIC.{}({}) OK — I2S libéré".format(_fn, _args))
                 break
-            except Exception as e:
-                print("[STEP 5] MIC.{}({}) failed: {}".format(_fn, _args, str(e)))
+            except Exception:
+                pass
         # mic_initialized reste True si aucune méthode n'a fonctionné — speaker bloqué pour éviter le crash I2S
         gc.collect()
 
@@ -795,7 +782,6 @@ def _ask_question():
 
         with open('/flash/question.wav', 'rb') as f:
             wav_data = f.read()
-        print("Question size:", len(wav_data), "bytes")
 
         r = urequests.post(
             FLASK_URL + '/ask-question?ip=' + (device_public_ip or '8.8.8.8'),
@@ -821,12 +807,10 @@ def _ask_question():
         r.close()
         del r
         gc.collect()
-        print("Response received:", response_text[:200])
 
         try:
             data = ujson.loads(response_text)
-        except Exception as e:
-            print("JSON parse error:", str(e))
+        except Exception:
             led_set(LED_RED)
             time.sleep(2)
             led_set(LED_CYAN, 15)
@@ -837,11 +821,8 @@ def _ask_question():
 
         if response_type == 'image':
             city = data.get('city', 'Unknown')
-            print("Fetching image for city:", city)
             led_set(LED_WHITE)
-
             gc.collect()
-            print("RAM avant download:", gc.mem_free())
 
             r2 = urequests.get(
                 FLASK_URL + '/get-weather-image-large?city=' + city
@@ -856,7 +837,6 @@ def _ask_question():
                 r2.close()
                 del r2
                 gc.collect()
-                print("Image telechargee, RAM apres:", gc.mem_free())
                 show_answer_image('/flash/res/city_weather.png')
                 _speak_answer(data.get('speech_text', ''))
             else:
@@ -865,14 +845,12 @@ def _ask_question():
 
         else:
             lines = data.get('lines', [['Answer', 'No data']])
-            print("Showing", len(lines), "text lines")
             show_answer_text(transcription, lines)
             _speak_answer(data.get('speech_text', ''))
 
         _cleanup_wav()
 
-    except Exception as e:
-        print("EXCEPTION:", type(e).__name__, str(e))
+    except Exception:
         _cleanup_wav()
         led_set(LED_RED)
         time.sleep(2)
@@ -883,23 +861,16 @@ def _ask_question():
 
 
 def _speak_answer(speech_text):
-    """Read Q&A answer aloud — only works if MIC.deinit(0) freed I2S."""
-    print("_speak_answer called, mic_initialized=", mic_initialized, "ram=", gc.mem_free())
     if mic_initialized:
-        print("TTS skipped — I2S still held by mic")
         return
     if not speech_text:
-        print("TTS skipped — no speech_text")
         return
     if gc.mem_free() < 300000:
-        print("TTS skipped — low RAM:", gc.mem_free())
         return
     try:
-        print("TTS starting:", speech_text[:60])
         led_set(LED_WHITE)
         time.sleep_ms(800)
         r = urequests.post(FLASK_URL + '/tts-text', json={'text': speech_text[:400]})
-        print("TTS response:", r.status_code)
         if r.status_code == 200:
             with open('/flash/answer_tts.wav', 'wb') as f:
                 f.write(r.content)
@@ -910,8 +881,7 @@ def _speak_answer(speech_text):
         else:
             r.close()
         led_set(LED_CYAN, 15)
-    except Exception as e:
-        print("TTS answer err:", str(e))
+    except Exception:
         led_set(LED_CYAN, 15)
 
 
