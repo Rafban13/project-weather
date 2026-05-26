@@ -1,6 +1,7 @@
 import os
+import json
+import math
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, request, send_file
 from bigquery_client import BigQueryClient
 from weather_client import WeatherClient
@@ -61,6 +62,60 @@ def sync_from_bigquery():
 
 
 # ─────────────────────────────────────────────────────────────
+#  WEATHER JSON (pour Streamlit — même géoloc que le M5Stack)
+# ─────────────────────────────────────────────────────────────
+
+@app.route('/get-weather-json', methods=['GET'])
+def get_weather_json():
+    """Current weather as JSON via IP geolocation — same source as M5Stack."""
+    try:
+        ip = request.args.get('ip', '8.8.8.8')
+        location = weather_client.fetch_location_data(ip)
+        lat, lon = location['loc'].split(',')
+        data = weather_client.fetch_weather_data(lat, lon, current_weather=True)
+        return jsonify({
+            'city':        data['name'],
+            'temp':        data['main']['temp'],
+            'feels_like':  data['main']['feels_like'],
+            'humidity':    data['main']['humidity'],
+            'description': data['weather'][0]['description'].capitalize(),
+            'icon':        data['weather'][0]['icon'],
+            'wind_speed':  data['wind']['speed'],
+            'pressure':    data['main']['pressure'],
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/get-forecast-json', methods=['GET'])
+def get_forecast_json():
+    """3-slot forecast as JSON (24h/48h/72h) — identical data points as /get-forecast-image."""
+    try:
+        ip = request.args.get('ip', '8.8.8.8')
+        location = weather_client.fetch_location_data(ip)
+        lat, lon = location['loc'].split(',')
+        raw = weather_client.fetch_weather_data(lat, lon, current_weather=False)
+        slots = [
+            (raw['list'][8],  '24h'),
+            (raw['list'][16], '48h'),
+            (raw['list'][24], '72h'),
+        ]
+        result = []
+        for fc, label in slots:
+            result.append({
+                'label':       label,
+                'date':        fc['dt_txt'].split(' ')[0],
+                'temp':        fc['main']['temp'],
+                'humidity':    fc['main']['humidity'],
+                'description': fc['weather'][0]['description'].capitalize(),
+                'icon':        fc['weather'][0]['icon'],
+            })
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────
 #  OUTDOOR WEATHER
 # ─────────────────────────────────────────────────────────────
 
@@ -85,17 +140,92 @@ def get_outdoor_weather():
 #  WEATHER IMAGES
 # ─────────────────────────────────────────────────────────────
 
-def _fetch_weather_icon(icon_code, size):
-    """Download an OWM icon and return it as an RGBA PIL Image, or None on failure."""
-    try:
-        url = 'https://openweathermap.org/img/wn/{}.png'.format(icon_code)
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 200:
-            icon = Image.open(io.BytesIO(resp.content)).convert('RGBA')
-            return icon.resize(size, Image.LANCZOS)
-    except Exception:
-        pass
-    return None
+def _draw_weather_icon(icon_code, size):
+    """Draw a weather icon using Pillow shapes — no network call, works on dark bg."""
+    w, h   = size
+    img    = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    d      = ImageDraw.Draw(img)
+    cx, cy = w // 2, h // 2
+    grp    = icon_code[:2]
+    day    = not icon_code.endswith('n')
+
+    SUN   = (255, 210,  40, 255)
+    MOON  = (210, 220, 255, 255)
+    CLOUD = (175, 190, 220, 255)
+    RAIN  = ( 80, 140, 255, 230)
+    SNOW  = (200, 225, 255, 230)
+    BOLT  = (255, 230,  50, 255)
+    FOG   = (160, 165, 190, 160)
+
+    def sun(scx, scy, r, col=SUN):
+        d.ellipse([scx-r, scy-r, scx+r, scy+r], fill=col)
+        rl = max(3, r // 2)
+        for a in range(0, 360, 45):
+            rd = math.radians(a)
+            x1 = scx + int((r + 2) * math.cos(rd))
+            y1 = scy + int((r + 2) * math.sin(rd))
+            x2 = scx + int((r + 2 + rl) * math.cos(rd))
+            y2 = scy + int((r + 2 + rl) * math.sin(rd))
+            d.line([x1, y1, x2, y2], fill=col, width=max(2, w // 22))
+
+    def cloud(ccx, ccy, r, col=CLOUD):
+        rh = r * 45 // 100
+        d.ellipse([ccx-r,               ccy-rh,        ccx+r,            ccy+rh       ], fill=col)
+        r2 = r * 50 // 100
+        d.ellipse([ccx-r*55//100-r2//2, ccy-rh-r2//3,  ccx-r*55//100+r2, ccy+rh//2   ], fill=col)
+        r3 = r * 58 // 100
+        d.ellipse([ccx-r//5,            ccy-rh-r3*2//3, ccx+r*7//10,     ccy+rh//4   ], fill=col)
+
+    if grp == '01':
+        if day:
+            sun(cx, cy, w * 28 // 100)
+        else:
+            r = w * 28 // 100
+            d.ellipse([cx-r, cy-r, cx+r, cy+r], fill=MOON)
+            d.ellipse([cx-r//3, cy-r, cx+r+r//2, cy+r], fill=(0, 0, 0, 0))
+
+    elif grp == '02':
+        if day:
+            sun(cx - w//5, cy - h//4, w // 5)
+        else:
+            rn = w // 5
+            d.ellipse([cx-w//5-rn, cy-h//4-rn, cx-w//5+rn, cy-h//4+rn], fill=MOON)
+        cloud(cx + w//10, cy + h//8, w * 30 // 100)
+
+    elif grp == '03':
+        cloud(cx, cy, w * 38 // 100)
+
+    elif grp == '04':
+        cloud(cx - w//10, cy - h//10, w * 38 // 100, (130, 145, 175, 255))
+        cloud(cx + w//8,  cy + h//8,  w * 32 // 100)
+
+    elif grp in ('09', '10'):
+        cloud(cx, cy - h//8, w * 36 // 100, (120, 130, 160, 255))
+        for dx in [-w//4, -w//10, w//10, w//4]:
+            d.line([cx+dx, cy+h//4, cx+dx-3, cy*3//2],
+                   fill=RAIN, width=max(2, w // 24))
+
+    elif grp == '11':
+        cloud(cx, cy - h//8, w * 36 // 100, (95, 100, 135, 255))
+        pts = [(cx+4, cy+h//6), (cx-6, cy+h//3), (cx+2, cy+h//3),
+               (cx-8, cy*3//2), (cx+10, cy*5//12), (cx+2, cy*5//12)]
+        d.polygon(pts, fill=BOLT)
+
+    elif grp == '13':
+        cloud(cx, cy - h//8, w * 36 // 100, (185, 200, 225, 255))
+        sr = max(2, w // 16)
+        for dx, dy in [(-w//4, 0), (0, 0), (w//4, 0), (-w//8, h//7), (w//8, h//7)]:
+            d.ellipse([cx+dx-sr, cy+h//3+dy-sr, cx+dx+sr, cy+h//3+dy+sr], fill=SNOW)
+
+    elif grp == '50':
+        for i, fy in enumerate(range(cy - h//5, cy + h//3, max(1, h // 7))):
+            fw = w * 65 // 100 - i * 5
+            d.ellipse([cx-fw//2, fy-max(2, h//28), cx+fw//2, fy+max(2, h//28)], fill=FOG)
+
+    else:
+        sun(cx, cy, w * 28 // 100)
+
+    return img
 
 
 def _paste_icon(base_img, icon, x, y, bg_color=(8, 8, 20)):
@@ -155,7 +285,7 @@ def get_weather_image():
         draw.text((164, 60), '{:.1f} m/s'.format(wind),    fill=(120, 120, 160), font=_font(14))
 
         # Weather icon
-        icon = _fetch_weather_icon(icon_code, (56, 56))
+        icon = _draw_weather_icon(icon_code, (56, 56))
         _paste_icon(img, icon, 258, 6, bg_color=BG)
 
         buf = io.BytesIO()
@@ -190,14 +320,9 @@ def get_forecast_image():
         draw = ImageDraw.Draw(img)
         draw.rectangle([(0, 0), (W, 2)], fill=(0, 229, 255))
 
-        # Fetch all 3 OWM icons in parallel
-        icon_codes = [fc['weather'][0]['icon'] for fc in forecasts]
-        icons = {}
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            futures = {ex.submit(_fetch_weather_icon, code, (52, 52)): i
-                       for i, code in enumerate(icon_codes)}
-            for fut in as_completed(futures):
-                icons[futures[fut]] = fut.result()
+        # Draw icons locally — no network needed
+        icons = {i: _draw_weather_icon(fc['weather'][0]['icon'], (52, 52))
+                 for i, fc in enumerate(forecasts)}
 
         col_w = W // 3  # 106 px per column
 
@@ -351,6 +476,23 @@ No emojis, no special characters. Be warm and engaging."""
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/tts-text', methods=['POST'])
+def tts_text():
+    """Convert any text to speech and return a WAV file — used to read Q&A answers aloud."""
+    try:
+        data = request.get_json()
+        text = data.get('text', '')
+        if not text:
+            return jsonify({"error": "text is required"}), 400
+        audio = text_to_speech_client.generate_speech(text[:500])
+        temp_file = os.path.join(TMP_DIR, 'answer_output.wav')
+        with open(temp_file, 'wb') as f:
+            f.write(audio)
+        return send_file(temp_file, mimetype='audio/wav')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ─────────────────────────────────────────────────────────────
 #  VOICE — Speech-to-Text + Gemini Q&A
 # ─────────────────────────────────────────────────────────────
@@ -360,7 +502,6 @@ def _get_weather_for_city(city_name: str) -> dict:
     try:
         url = (f"https://api.openweathermap.org/data/2.5/weather"
                f"?q={city_name}&appid={weather_client.openweathermap_api_key}&units=metric")
-        import requests
         response = requests.get(url)
         if response.status_code == 200:
             return response.json()
@@ -373,7 +514,6 @@ def _get_forecast_for_city(city_name: str) -> dict:
     try:
         url = (f"https://api.openweathermap.org/data/2.5/forecast"
                f"?q={city_name}&appid={weather_client.openweathermap_api_key}&units=metric")
-        import requests
         response = requests.get(url)
         if response.status_code == 200:
             return response.json()
@@ -517,12 +657,19 @@ def ask_question():
  
         # ── BRANCHE M5STACK : reponse structuree (image ou tableau) ──
  
-        # 5a. Si ville valide detectee, on dit au M5Stack de demander l'image
+        # 5a. Si ville valide detectee, on dit au M5Stack de demander l'image + phrase parlée
         if city_is_valid:
+            temp  = city_weather['main']['temp']
+            hum   = city_weather['main']['humidity']
+            desc  = city_weather['weather'][0]['description'].capitalize()
+            speech_text = (
+                "In {city}, it is {temp:.0f} degrees. {desc}. Humidity is {hum} percent."
+            ).format(city=extracted_city.capitalize(), temp=temp, desc=desc, hum=hum)
             return jsonify({
-                "type":"image",
-                "transcription": question,
-                "city": extracted_city
+                "type":          "image",
+                "transcription":  question,
+                "city":           extracted_city,
+                "speech_text":    speech_text,
             }), 200
  
         # 5b. Si ville mentionnee mais introuvable, fallback texte
@@ -534,7 +681,7 @@ def ask_question():
                          ["Status", "Not found"]]
             }), 200
  
-        # 5c. Question generale : reponse tabulaire via Gemini en JSON
+        # 5c. Question generale : reponse tabulaire + phrase parlée via Gemini
         structured_prompt = (
             'User question: "{}"\n'
             'Local city: {}\n'
@@ -543,23 +690,23 @@ def ask_question():
             'Indoor history (48h):\n{}\n'
             'Indoor sensors: {}\n\n'
             'Answer the question using the data above. '
-            'Reply ONLY with a JSON array of 3 to 6 [label, value] pairs. '
-            'Labels are short (max 12 chars), values are short (max 18 chars). '
-            'Example: [["Topic","Indoor temp"],["Now","22.3 C"],["Trend","Stable"]]. '
-            'No markdown, no comments, no code fences, just the JSON array.'
+            'Reply ONLY with a JSON object with two fields:\n'
+            '  "lines": array of 3 to 6 [label, value] pairs (labels max 12 chars, values max 18 chars)\n'
+            '  "speech": a natural spoken English sentence, max 25 words, directly answering the question\n'
+            'Example: {{"lines":[["Topic","Indoor temp"],["Now","22.3 C"],["Trend","Stable"]],"speech":"The indoor temperature is 22 degrees and has been stable all morning."}}\n'
+            'No markdown, no code fences, just the raw JSON object.'
         ).format(question, local_city, current_weather, forecast_5d,
                  indoor_history, latest_indoor)
- 
+
         SYSTEM_INSTRUCTION = (
-            "You return ONLY a JSON array of [label,value] pairs in English. "
-            "Labels and values must be in English, regardless of the question language. "
-            "No prose, no markdown fences, just the raw JSON array."
+            "You return ONLY a JSON object with 'lines' (English label/value pairs) "
+            "and 'speech' (natural English sentence). No markdown, no prose outside JSON."
         )
- 
+
         raw_answer = vertex_ai_client.get_weather_description(
             structured_prompt, SYSTEM_INSTRUCTION
         )
- 
+
         # Nettoyer la reponse Gemini (peut contenir des backticks markdown)
         cleaned = raw_answer.strip()
         if cleaned.startswith('```'):
@@ -567,23 +714,29 @@ def ask_question():
             if cleaned.startswith('json'):
                 cleaned = cleaned[4:]
         cleaned = cleaned.strip()
- 
+
+        speech_text = ""
         try:
-            import json as _json
-            lines = _json.loads(cleaned)
-            if not isinstance(lines, list):
-                raise ValueError("Not a list")
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                raw_lines  = parsed.get('lines', [])
+                speech_text = parsed.get('speech', '')[:400]
+            elif isinstance(parsed, list):
+                raw_lines = parsed   # backwards compat si Gemini renvoie encore un tableau
+            else:
+                raise ValueError("Unexpected format")
             lines = [[str(p[0])[:14], str(p[1])[:18]]
-                     for p in lines if len(p) >= 2]
+                     for p in raw_lines if len(p) >= 2]
             if not lines:
                 lines = [["Answer", "No data"]]
         except Exception:
             lines = [["Answer", cleaned[:18] if cleaned else "No data"]]
- 
+
         return jsonify({
-            "type":"text",
+            "type":        "text",
             "transcription": question,
-            "lines": lines[:6]
+            "lines":       lines[:6],
+            "speech_text": speech_text,
         }), 200
  
     except Exception as e:
@@ -634,7 +787,7 @@ def get_weather_image_large():
 
         # Icon top-right
         icon_code = weather_data["weather"][0]["icon"]
-        icon = _fetch_weather_icon(icon_code, (72, 72))
+        icon = _draw_weather_icon(icon_code, (72, 72))
         _paste_icon(img, icon, 234, 16, bg_color=(8, 8, 20))
 
         draw.text((14, 8),  name[:22],                        fill=(0, 229, 255),   font=_font(13))

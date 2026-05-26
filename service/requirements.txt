@@ -6,6 +6,5 @@ db-dtypes
 google-cloud-aiplatform
 google-cloud-texttospeech
 Pillow
-matplotlib
 pandas
 google-cloud-speech
