@@ -1,70 +1,44 @@
 import requests
-from config import OPENWEATHER_API_KEY, CITY, COUNTRY_CODE
+import bigquery_client as bq
 
-BASE_URL = "https://api.openweathermap.org/data/2.5"
+FLASK_URL = 'https://weather-service-197991375095.europe-west6.run.app'
+
+
+def _get_device_ip():
+    """Get last device public IP from BigQuery — ensures same location as M5Stack."""
+    try:
+        latest = bq.get_latest_reading()
+        if latest is not None and 'ip_address' in latest:
+            ip = str(latest['ip_address']).strip()
+            if ip and ip != 'unknown':
+                return ip
+    except Exception:
+        pass
+    return '8.8.8.8'
 
 
 def get_current_weather():
-    """Fetch current weather for the configured city."""
-    url = f"{BASE_URL}/weather"
-    params = {
-        "q": f"{CITY},{COUNTRY_CODE}",
-        "appid": OPENWEATHER_API_KEY,
-        "units": "metric",
-        "lang": "en",
-    }
+    """Fetch current weather using the M5Stack device's geolocated IP."""
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        ip = _get_device_ip()
+        resp = requests.get(f'{FLASK_URL}/get-weather-json', params={'ip': ip}, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        return {
-            "city":        data["name"],
-            "temp":        data["main"]["temp"],
-            "feels_like":  data["main"]["feels_like"],
-            "humidity":    data["main"]["humidity"],
-            "description": data["weather"][0]["description"].capitalize(),
-            "icon":        data["weather"][0]["icon"],
-            "wind_speed":  data["wind"]["speed"],
-            "pressure":    data["main"]["pressure"],
-        }
+        return resp.json()
     except Exception as e:
-        return {"error": str(e)}
+        return {'error': str(e)}
 
 
 def get_forecast():
-    """Fetch 5-day / 3-hour forecast, grouped by day."""
-    url = f"{BASE_URL}/forecast"
-    params = {
-        "q": f"{CITY},{COUNTRY_CODE}",
-        "appid": OPENWEATHER_API_KEY,
-        "units": "metric",
-        "lang": "en",
-        "cnt": 40,  # 5 days x 8 readings/day
-    }
+    """Fetch 5-day forecast using the M5Stack device's geolocated IP."""
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        ip = _get_device_ip()
+        resp = requests.get(f'{FLASK_URL}/get-forecast-json', params={'ip': ip}, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-
-        # Group by date, prefer noon reading
-        days = {}
-        for item in data["list"]:
-            date = item["dt_txt"].split(" ")[0]
-            hour = item["dt_txt"].split(" ")[1]
-            if date not in days or hour == "12:00:00":
-                days[date] = {
-                    "date":        date,
-                    "temp_min":    item["main"]["temp_min"],
-                    "temp_max":    item["main"]["temp_max"],
-                    "description": item["weather"][0]["description"].capitalize(),
-                    "icon":        item["weather"][0]["icon"],
-                    "humidity":    item["main"]["humidity"],
-                }
-        return list(days.values())[:5]
+        return resp.json()
     except Exception as e:
-        return {"error": str(e)}
+        return {'error': str(e)}
 
 
 def icon_url(icon_code: str) -> str:
     """Return the OpenWeatherMap icon URL for a given icon code."""
-    return f"https://openweathermap.org/img/wn/{icon_code}@2x.png"
+    return f'https://openweathermap.org/img/wn/{icon_code}@2x.png'

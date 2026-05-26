@@ -7,10 +7,8 @@ import time
 
 from config import (
     HUMIDITY_LOW_THRESHOLD,
-    CO2_MODERATE_THRESHOLD,
     CO2_BAD_THRESHOLD,
     CO2_ALERT_THRESHOLD,
-    HISTORY_HOURS,
 )
 import bigquery_client as bq
 import weather_api as weather
@@ -317,6 +315,23 @@ def air_quality_label(co2):
     else:            return "Poor", "badge-bad"
 
 
+def weather_emoji(icon_code: str) -> str:
+    grp = icon_code[:2] if icon_code else "01"
+    night = icon_code.endswith("n") if icon_code else False
+    mapping = {
+        "01": "🌙" if night else "☀️",
+        "02": "🌤️",
+        "03": "☁️",
+        "04": "☁️",
+        "09": "🌧️",
+        "10": "🌦️",
+        "11": "⛈️",
+        "13": "❄️",
+        "50": "🌫️",
+    }
+    return mapping.get(grp, "🌤️")
+
+
 def format_date(dt):
     days   = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
     months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
@@ -383,20 +398,11 @@ with col_time:
     </div>
     """, unsafe_allow_html=True)
 
-# ── History selector ──────────────────────────────────────────────────────────
+# ── History period — resolved from session state (buttons rendered below near charts) ──
 hours_options = {"6h": 6, "12h": 12, "24h": 24, "48h": 48, "7 days": 168}
 
 if "selected_hours_label" not in st.session_state:
     st.session_state.selected_hours_label = "24h"
-
-cols_btn = st.columns(len(hours_options))
-for i, (label, val) in enumerate(hours_options.items()):
-    with cols_btn[i]:
-        is_active = st.session_state.selected_hours_label == label
-        btn_style = "background:#1971c2;color:white;border:none;" if is_active else "background:white;color:#1a2b4a;border:1px solid #bee3f8;"
-        if st.button(label, key=f"btn_{label}", use_container_width=False):
-            st.session_state.selected_hours_label = label
-            st.rerun()
 
 selected_label = st.session_state.selected_hours_label
 selected_hours = hours_options[selected_label]
@@ -499,29 +505,40 @@ else:
     st.error(f"Weather API error: {current_weather['error']}")
 
 # ── Forecast ──────────────────────────────────────────────────────────────────
-st.markdown('<div class="section-title">📅 5-Day Forecast</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">📅 3-Day Forecast</div>', unsafe_allow_html=True)
 if isinstance(forecast, list) and forecast:
-    cols = st.columns(len(forecast))
-    for i, day in enumerate(forecast):
+    cols = st.columns(3)
+    for i, day in enumerate(forecast[:3]):
+        label = day.get('label', f"+{(i+1)*24}h")
+        date_str = format_date(day['date']) if 'date' in day else ''
         with cols[i]:
             st.markdown(f"""
             <div class="forecast-card">
-                <div class="forecast-day">{format_date(day['date'])}</div>
-                <img src="https://openweathermap.org/img/wn/{day['icon']}@2x.png" width="52" style="margin:2px 0">
-                <div class="forecast-temp-max">{day['temp_max']:.0f}°</div>
+                <div class="forecast-day">{label} &nbsp;·&nbsp; {date_str}</div>
+                <div style="font-size:52px;line-height:1.1;margin:6px 0">{weather_emoji(day['icon'])}</div>
+                <div class="forecast-temp-max">{day['temp']:.0f}°<span style="font-size:15px;color:#94b8d6">C</span></div>
                 <div class="forecast-desc">{day['description']}</div>
-                <div style="font-size:11px;color:#74c0fc;margin-top:6px;font-weight:600;">💧 {day['humidity']}%</div>
+                <div style="font-size:12px;color:#74c0fc;margin-top:6px;font-weight:600;">💧 {day['humidity']}%</div>
             </div>""", unsafe_allow_html=True)
 
 # ── Historical charts ─────────────────────────────────────────────────────────
-st.markdown(f'<div class="section-title">📈 Historical Data — {selected_label}</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="section-title">📈 Historical Data</div>', unsafe_allow_html=True)
+
+cols_btn = st.columns(len(hours_options))
+for i, (label, val) in enumerate(hours_options.items()):
+    with cols_btn[i]:
+        if st.button(label, key=f"btn_{label}", use_container_width=True):
+            st.session_state.selected_hours_label = label
+            st.rerun()
+st.caption(f"Showing last **{selected_label}** of data")
+
 if not history_df.empty:
     ch1, ch2 = st.columns(2)
-    with ch1: st.plotly_chart(make_line_chart(history_df, "indoor_temp",        "rgb(25,113,194)",  "Indoor Temperature",  "°C"), use_container_width=True)
-    with ch2: st.plotly_chart(make_line_chart(history_df, "indoor_humidity",    "rgb(51,154,240)",  "Indoor Humidity",     "%"),  use_container_width=True)
+    with ch1: st.plotly_chart(make_line_chart(history_df, "indoor_temp",        "rgb(25,113,194)",  f"Indoor Temperature — {selected_label}",  "°C"), use_container_width=True)
+    with ch2: st.plotly_chart(make_line_chart(history_df, "indoor_humidity",    "rgb(51,154,240)",  f"Indoor Humidity — {selected_label}",       "%"),  use_container_width=True)
     ch3, ch4 = st.columns(2)
-    with ch3: st.plotly_chart(make_line_chart(history_df, "indoor_air_quality", "rgb(64,192,87)", "CO₂ Level (ppm)", " ppm"), use_container_width=True)
-    with ch4: st.plotly_chart(make_line_chart(history_df, "indoor_humidity", "rgb(51,154,240)", "Indoor Humidity", "%"), use_container_width=True)
+    with ch3: st.plotly_chart(make_line_chart(history_df, "indoor_air_quality", "rgb(64,192,87)",   f"CO₂ Level — {selected_label}",            " ppm"), use_container_width=True)
+    with ch4: st.plotly_chart(make_line_chart(history_df, "outdoor_temp",       "rgb(255,171,0)",   f"Outdoor Temperature — {selected_label}",   "°C"), use_container_width=True)
 else:
     st.info("No historical data available for this period.")
 
